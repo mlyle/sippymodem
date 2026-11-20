@@ -727,9 +727,9 @@ static bool sample_reciprocal_probe(
 	struct v34_phase2_initial_probe *initial = &probe->initial;
 	struct phase2_info0_exchange *transport = &initial->ranging.info0_exchange.transport;
 
-	if (phase2_reciprocal_probe_sample(
-		    &probe->reciprocal, &probe->turnaround, &initial->control,
-		    transport, received_sample, transmit_sample, &child) !=
+	if (phase2_reciprocal_probe_sample_owned(
+		    &probe->reciprocal, &probe->turnaround, transport,
+		    received_sample, transmit_sample, &child) !=
 	    PHASE2_RECIPROCAL_PROBE_OK)
 		return false;
 	if (child.kind == PHASE2_RECIPROCAL_PROBE_EVENT_FAILED) {

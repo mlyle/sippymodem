@@ -96,6 +96,16 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_reciprocal_probe_event *event);
 
+/* The parent has validated the complete reciprocal stage. Only the probe and
+ * live tone transport advance. Completed ranging history stays read-only, so
+ * only the live state needs checking before this transaction commits. */
+enum phase2_reciprocal_probe_result phase2_reciprocal_probe_sample_owned(
+	struct phase2_reciprocal_probe *probe,
+	const struct phase2_probe_turnaround *completed_turnaround,
+	struct phase2_info0_exchange *exchange,
+	int16_t received_sample, int16_t *transmit_sample,
+	struct phase2_reciprocal_probe_event *event);
+
 enum phase2_reciprocal_probe_result phase2_reciprocal_probe_measure(
 	const struct phase2_reciprocal_probe *probe,
 	const struct phase2_probe_turnaround *completed_turnaround,

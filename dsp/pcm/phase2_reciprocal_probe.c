@@ -105,19 +105,12 @@ static bool signal_a_path_is_valid(
 	return false;
 }
 
-bool phase2_reciprocal_probe_is_valid(
+static bool probe_path_is_valid(
 	const struct phase2_reciprocal_probe *probe,
 	const struct phase2_probe_turnaround *completed_turnaround,
-	const struct phase2_initial_probe *completed_initial_probe,
 	const struct phase2_info0_exchange *exchange)
 {
-	if (probe == NULL ||
-	    !phase2_probe_turnaround_is_valid(
-		    completed_turnaround, completed_initial_probe, exchange) ||
-	    !completed_turnaround_matches_role(
-		    completed_turnaround, exchange) ||
-	    (unsigned int)probe->phase >
-		    PHASE2_RECIPROCAL_PROBE_FAILED ||
+	if ((unsigned int)probe->phase > PHASE2_RECIPROCAL_PROBE_FAILED ||
 	    (unsigned int)probe->failure >
 		    PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT)
 		return false;
@@ -129,6 +122,19 @@ bool phase2_reciprocal_probe_is_valid(
 		       completed_turnaround
 			       ->signal_a_reversal_elapsed_samples &&
 	       signal_a_path_is_valid(probe);
+}
+
+bool phase2_reciprocal_probe_is_valid(
+	const struct phase2_reciprocal_probe *probe,
+	const struct phase2_probe_turnaround *completed_turnaround,
+	const struct phase2_initial_probe *completed_initial_probe,
+	const struct phase2_info0_exchange *exchange)
+{
+	return probe != NULL &&
+	       phase2_probe_turnaround_is_valid(
+		       completed_turnaround, completed_initial_probe, exchange) &&
+	       completed_turnaround_matches_role(completed_turnaround, exchange) &&
+	       probe_path_is_valid(probe, completed_turnaround, exchange);
 }
 
 enum phase2_reciprocal_probe_result phase2_reciprocal_probe_init(
@@ -320,19 +326,29 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_reciprocal_probe_event *event)
 {
-	struct phase2_reciprocal_probe next;
-	struct phase2_info0_exchange next_exchange;
-	struct phase2_reciprocal_probe_event emitted = { 0 };
-	int16_t generated = 0;
-	bool accepted = true;
-
 	if (!phase2_reciprocal_probe_is_valid(
 		    probe, completed_turnaround,
 		    completed_initial_probe, exchange) ||
 	    transmit_sample == NULL || event == NULL)
 		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
-	next = *probe;
-	next_exchange = *exchange;
+	return phase2_reciprocal_probe_sample_owned(
+		probe, completed_turnaround, exchange, received_sample,
+		transmit_sample, event);
+}
+
+enum phase2_reciprocal_probe_result phase2_reciprocal_probe_sample_owned(
+	struct phase2_reciprocal_probe *probe,
+	const struct phase2_probe_turnaround *completed_turnaround,
+	struct phase2_info0_exchange *exchange,
+	int16_t received_sample, int16_t *transmit_sample,
+	struct phase2_reciprocal_probe_event *event)
+{
+	struct phase2_reciprocal_probe next = *probe;
+	struct phase2_info0_exchange next_exchange = *exchange;
+	struct phase2_reciprocal_probe_event emitted = { 0 };
+	int16_t generated = 0;
+	bool accepted = true;
+
 	switch (next.phase) {
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_B_TRANSMITTING:
 		accepted = transmit_local_probe(
@@ -362,9 +378,8 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_sample(
 	    next.signal_a_reversal_elapsed_samples != UINT32_MAX)
 		next.signal_a_reversal_elapsed_samples++;
 	if (!accepted ||
-	    !phase2_reciprocal_probe_is_valid(
-		    &next, completed_turnaround,
-		    completed_initial_probe, &next_exchange))
+	    !phase2_info0_exchange_is_valid(&next_exchange) ||
+	    !probe_path_is_valid(&next, completed_turnaround, &next_exchange))
 		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
 	*probe = next;
 	*exchange = next_exchange;
