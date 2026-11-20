@@ -498,17 +498,12 @@ static void commit_training_step(
 	echo->train_peak = step->train_peak;
 }
 
-static enum pcm_host_echo_result retime_active_model(
-	struct pcm_host_echo *echo, int delay_change_samples)
+static enum pcm_host_echo_result position_active_model(
+	struct pcm_host_echo *echo, uint32_t active, int64_t delay)
 {
-	uint32_t active = pcm_host_echo_active_delay_owned(echo, PCM_HOST_ECHO_FILTER);
 	if (!active)
 		return PCM_HOST_ECHO_INVALID_STATE;
-	int64_t delay = (int64_t)active + delay_change_samples;
-	if (delay_change_samples == 0 ||
-	    delay_change_samples < -ECHO_TIMING_RADIUS ||
-	    delay_change_samples > ECHO_TIMING_RADIUS ||
-	    delay <= 0 || delay > PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES)
+	if (delay == active || delay <= 0 || delay > PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES)
 		return PCM_HOST_ECHO_INVALID_ARGUMENT;
 	if ((uint64_t)delay + PCM_HOST_ECHO_FILTER_TAPS - 1u > echo->reference.fill)
 		return PCM_HOST_ECHO_INVALID_STATE;
@@ -523,6 +518,16 @@ static enum pcm_host_echo_result retime_active_model(
 	return PCM_HOST_ECHO_OK;
 }
 
+static enum pcm_host_echo_result retime_active_model(
+	struct pcm_host_echo *echo, int delay_change_samples)
+{
+	uint32_t active = pcm_host_echo_active_delay_owned(echo, PCM_HOST_ECHO_FILTER);
+	if (active && (delay_change_samples < -ECHO_TIMING_RADIUS ||
+		       delay_change_samples > ECHO_TIMING_RADIUS))
+		return PCM_HOST_ECHO_INVALID_ARGUMENT;
+	return position_active_model(echo, active, (int64_t)active + delay_change_samples);
+}
+
 enum pcm_host_echo_result pcm_host_echo_retime(
 	struct pcm_host_echo *echo, int delay_change_samples)
 {
@@ -531,6 +536,20 @@ enum pcm_host_echo_result pcm_host_echo_retime(
 	if (!header_is_valid(echo))
 		return PCM_HOST_ECHO_INVALID_STATE;
 	enum pcm_host_echo_result result = retime_active_model(echo, delay_change_samples);
+	if (result == PCM_HOST_ECHO_OK)
+		echo_timing_reset(&echo->timing);
+	return result;
+}
+
+enum pcm_host_echo_result pcm_host_echo_position_delay(
+	struct pcm_host_echo *echo, uint32_t delay)
+{
+	if (echo == NULL)
+		return PCM_HOST_ECHO_INVALID_ARGUMENT;
+	if (!header_is_valid(echo))
+		return PCM_HOST_ECHO_INVALID_STATE;
+	enum pcm_host_echo_result result = position_active_model(echo,
+		pcm_host_echo_active_delay_owned(echo, PCM_HOST_ECHO_FILTER), delay);
 	if (result == PCM_HOST_ECHO_OK)
 		echo_timing_reset(&echo->timing);
 	return result;

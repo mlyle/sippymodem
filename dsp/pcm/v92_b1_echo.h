@@ -8,6 +8,10 @@
 #include "v92_upstream_data_rx.h"
 
 enum {
+	/* The ordinary 40 ms range remains available with shorter history.
+	 * B1u can test another 2 ms when both ends of the window are present. */
+	V92_B1_ECHO_RADIUS = ECHO_TIMING_RADIUS + 16,
+	V92_B1_ECHO_BINS = 2 * V92_B1_ECHO_RADIUS + 1,
 	V92_B1_ECHO_SAMPLES = V92_B1U_SYMBOLS,
 	V92_B1_ECHO_FIT_INPUTS = 144,
 	V92_B1_ECHO_INPUTS = (V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) *
@@ -22,7 +26,7 @@ struct v92_b1_echo_fit {
 };
 
 struct v92_b1_echo_evidence {
-	double score[ECHO_TIMING_BINS];
+	double score[V92_B1_ECHO_BINS];
 	double old_sum, old_square, runner_sum, runner_square;
 	unsigned count;
 };
@@ -38,6 +42,7 @@ struct v92_b1_echo {
 	uint64_t clock;
 	uint32_t delay;
 	unsigned count, prefix, replayed, budget;
+	unsigned radius, stopped_count;
 	unsigned stage;
 	bool retained;
 	int16_t ideal[V92_B1_ECHO_SAMPLES];
@@ -46,7 +51,7 @@ struct v92_b1_echo {
 	 * The full raw and wire histories serve the alternate decoder below. */
 	int16_t cleaned[V92_B1_ECHO_FIT_INPUTS];
 	uint8_t code[V92_B1_ECHO_INPUTS];
-	double prediction[V92_B1_ECHO_INPUTS + 2 * ECHO_TIMING_RADIUS];
+	double prediction[V92_B1_ECHO_INPUTS + 2 * V92_B1_ECHO_RADIUS];
 	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];
 	struct v92_upstream_data_rx receiver;
 };
@@ -58,6 +63,8 @@ void v92_b1_echo_begin_block_owned(struct v92_b1_echo *recovery, unsigned sample
  * owner qualifies an initial raw or short B1u epoch and validates echo/receiver.
  * The owner's distance bank follows that receiver through the data epoch.
  * Missing media, clipping, queued input or any model/clock change abandon it.
+ * An acquired waveform fit may outlive the primary within the call's B1 guard.
+ * stopped_count records the exact input on which the primary stopped.
  * Work is bounded by two replay submissions per input and ceil(1.6 times
  * the block length) submissions per block.
  * True supplies a complete native alternate for this input only; the ordinary

@@ -459,6 +459,7 @@ struct pcm_call_observation {
 struct pcm_call_b1_alternate {
 	const struct v92_upstream_data_rx *receiver;
 	const struct v92_b1_quality *quality;
+	bool replaces_failed_primary;
 	bool (*accept)(void *context);
 	void *context;
 };
@@ -574,6 +575,18 @@ struct pcm_call {
 	bool pcm_upstream_trained;
 	bool suppress_v90_info1d_3429;
 };
+
+/* Valid digital V.92 PCM data path, before the call's normal startup guard
+ * expires. A receive alternate can finish independently of the failed raw
+ * decoder. Keep media loss and online/short-exchange guards separate. */
+static inline bool pcm_call_failed_raw_b1_owned(const struct pcm_call *call)
+{
+	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+	return call->b1_deadline_armed && path->quality_guard_samples &&
+	       path->fast.stage == PCM_CALL_V92_FAST_IDLE && !path->pending_media_loss &&
+	       path->upstream.failed &&
+	       path->upstream.line.plan.observation == V92_PCM_FRAME_CONSTELLATION;
+}
 
 enum pcm_call_result pcm_call_init(
 	struct pcm_call *call,

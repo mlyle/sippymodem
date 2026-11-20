@@ -3,6 +3,8 @@
 #include "wide_uint.h"
 
 #include <pcm_call.h>
+#include <v92_b1_echo.h>
+#include <sample_math.h>
 #include <v90_phase4_owned.h>
 
 #include <g711.h>
@@ -7212,9 +7214,82 @@ static bool v92_data_boundary(struct pcm_call *call)
 	return true;
 }
 
-static bool v92_payload_sample_with_idle(
+static int16_t fixture_echo_reference(unsigned clock)
+{
+	uint32_t x = clock + UINT32_C(0x9e3779b9);
+	x = (x ^ (x >> 16)) * UINT32_C(0x7feb352d);
+	x = (x ^ (x >> 15)) * UINT32_C(0x846ca68b);
+	x ^= x >> 16;
+	return (int16_t)((int)(x % 16001) - 8000);
+}
+
+struct v92_echo_fixture {
+	struct pcm_host_echo echo;
+	struct v92_b1_echo receiver;
+	struct v92_cpd_distances distances;
+	unsigned inputs;
+	bool accepted;
+	bool saw_primary_failure;
+};
+
+enum {
+	FIXTURE_ECHO_DELAY = 900,
+	FIXTURE_ECHO_SHIFT = 324,
+	FIXTURE_ECHO_HISTORY = 2000,
+	FIXTURE_ECHO_BLOCK = 80,
+};
+
+static bool accept_fixture_echo(void *context)
+{
+	struct v92_echo_fixture *fixture = context;
+	fixture->accepted = v92_b1_echo_accept_owned(&fixture->receiver, &fixture->echo);
+	return fixture->accepted;
+}
+
+static enum pcm_call_result v92_fixture_data_octet(
+	struct pcm_call *call, uint8_t wire, int16_t sample, bool available,
+	const struct pcm_call_data_sources *sources, struct v92_echo_fixture *fixture,
+	uint8_t *tx, struct pcm_call_data_event *event)
+{
+	if (!fixture || call->local_role != V90_DIGITAL_MODEM ||
+	    call->state.data_path.v92_digital.upstream.line.delay_remaining)
+		return pcm_call_data_octet(call, wire, sample, available, sources, tx, event);
+
+	double echoed;
+	int16_t cleaned;
+	if (pcm_host_echo_project_owned(&fixture->echo, FIXTURE_ECHO_DELAY + FIXTURE_ECHO_SHIFT,
+	    &echoed) != PCM_HOST_ECHO_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	wire = encode_octet(call->law, sample_round_s16(sample + echoed));
+	int16_t raw = decode_octet(call->law, wire);
+	if (pcm_host_echo_predict(&fixture->echo, PCM_HOST_ECHO_FILTER, raw, &cleaned) != PCM_HOST_ECHO_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	const struct v92_upstream_data_rx *primary = &call->state.data_path.v92_digital.upstream;
+	fixture->saw_primary_failure |= primary->failed;
+	if (fixture->inputs % FIXTURE_ECHO_BLOCK == 0)
+		v92_b1_echo_begin_block_owned(&fixture->receiver, FIXTURE_ECHO_BLOCK);
+	bool ready = !fixture->accepted && v92_b1_echo_observe_owned(&fixture->receiver,
+		&fixture->echo, primary, &fixture->distances, wire, raw, cleaned, available);
+	const struct pcm_call_b1_alternate alternate = {
+		.receiver = &fixture->receiver.receiver,
+		.quality = &fixture->receiver.quality,
+		.accept = accept_fixture_echo, .context = fixture,
+		.replaces_failed_primary = fixture->receiver.stopped_count != 0,
+	};
+	enum pcm_call_result result = pcm_call_data_octet_alternate_owned(call, wire, cleaned, raw,
+		available, sources, ready ? &alternate : NULL, tx, event);
+	if (result != PCM_CALL_OK)
+		return result;
+	if (pcm_echo_reference_push(&fixture->echo.reference,
+	    fixture_echo_reference(FIXTURE_ECHO_HISTORY + fixture->inputs++)) != PCM_ECHO_REFERENCE_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	return PCM_CALL_OK;
+}
+
+static bool v92_payload_sample_with_echo(
 	struct pcm_call *call, uint8_t received, int16_t sample, struct pcm_payload_source *source,
-	uint32_t *received_frames, uint8_t *transmitted, uint64_t *idle_frames)
+	uint32_t *received_frames, uint8_t *transmitted, uint64_t *idle_frames,
+	struct v92_echo_fixture *fixture)
 {
 	struct pcm_call_data_sources sources = {
 		.pcm_upstream = pcm_payload, .pcm_upstream_context = source,
@@ -7228,22 +7303,22 @@ static bool v92_payload_sample_with_idle(
 
 	if (!source->rejection_checked)
 		snapshot = *call;
-	result = pcm_call_data_octet(call, received, sample, true,
-				    &sources, &generated, &event);
+	result = v92_fixture_data_octet(call, received, sample, true,
+				    &sources, fixture, &generated, &event);
 	if (result == PCM_CALL_SOURCE_FAILURE) {
 		CHECK(!source->rejection_checked && !source->reject &&
 		      generated == 0xa5u && memcmp(&event, &sentinel, sizeof(event)) == 0 &&
 		      call_states_equal(call, &snapshot),
 		      "V.92 source rejection consumed media or changed output");
 		source->reject = true;
-		CHECK(pcm_call_data_octet(call, received, sample, false, &sources,
-			&generated, &event) == PCM_CALL_SOURCE_FAILURE && !source->reject &&
+		CHECK(v92_fixture_data_octet(call, received, sample, false, &sources,
+			fixture, &generated, &event) == PCM_CALL_SOURCE_FAILURE && !source->reject &&
 		      generated == 0xa5u && memcmp(&event, &sentinel, sizeof(event)) == 0 &&
 		      call_states_equal(call, &snapshot),
 		      "V.92 source rejection consumed a media loss notification");
 		source->rejection_checked = true;
-		result = pcm_call_data_octet(call, received, sample, true,
-					    &sources, &generated, &event);
+		result = v92_fixture_data_octet(call, received, sample, true,
+					    &sources, fixture, &generated, &event);
 	}
 	CHECK(result == PCM_CALL_OK, "V.92 data returned %s", pcm_call_result_name(result));
 	if (event.kind != PCM_CALL_DATA_NONE) {
@@ -7285,6 +7360,14 @@ static bool v92_payload_sample_with_idle(
 	}
 	*transmitted = generated;
 	return true;
+}
+
+static bool v92_payload_sample_with_idle(
+	struct pcm_call *call, uint8_t received, int16_t sample, struct pcm_payload_source *source,
+	uint32_t *received_frames, uint8_t *transmitted, uint64_t *idle_frames)
+{
+	return v92_payload_sample_with_echo(call, received, sample, source,
+		received_frames, transmitted, idle_frames, NULL);
 }
 
 static bool v92_payload_sample(
@@ -7901,6 +7984,7 @@ struct v92_upstream_offer {
 	/* Additional delayed samples exercise the measured channel inverse. */
 	double second_postcursor, third_postcursor;
 	bool check_b1_peer_retrain;
+	struct v92_echo_fixture *b1_echo;
 	unsigned downstream_robbed_pattern;
 	bool downstream_inverted;
 	uint8_t downstream_robbed_rotation;
@@ -8477,6 +8561,7 @@ static bool capture_v92_duplex_data(
 	size_t sample_limit = CALL_SAMPLE_LIMIT *
 		(offer == NULL ? 1u : offer->expected_retrains + 1u);
 	int16_t selected_lu = 0;
+	struct v92_echo_fixture *fixture = offer ? offer->b1_echo : NULL;
 	bool channel_memory = offer != NULL &&
 		(offer->postcursor != 0.0 || offer->second_postcursor != 0.0 || offer->third_postcursor != 0.0);
 	/* Use a longer payload for compensated 40k and balanced direct maps to
@@ -8577,7 +8662,11 @@ static bool capture_v92_duplex_data(
 					downstream_received = 0u;
 					downstream_idle = 0u;
 				} else {
-					downstream = (struct pcm_payload_source){ .reject = true };
+					/* The echo fixture models one physical input per call.
+					 * Other duplex cases cover transactional TX backpressure. */
+					downstream = (struct pcm_payload_source){
+						.reject = !fixture, .rejection_checked = fixture != NULL,
+					};
 					upstream_received = 0u;
 				}
 				if (role == 0u)
@@ -8630,9 +8719,9 @@ static bool capture_v92_duplex_data(
 					CHECK(pcm_call_data_octet(call, received, sample, true, NULL, transmitted, &event) ==
 						      PCM_CALL_OK, "V.92 peer did not accept training recovery");
 				} else {
-					CHECK(v92_payload_sample_with_idle(call, received, sample, role == 0u ? &upstream : &downstream,
+					CHECK(v92_payload_sample_with_echo(call, received, sample, role == 0u ? &upstream : &downstream,
 							      role == 0u ? &downstream_received : &upstream_received,
-							      transmitted, role == 0u ? &downstream_idle : NULL),
+							      transmitted, role == 0u ? &downstream_idle : NULL, fixture),
 					      "V.92 payload failed at clock %zu", clock);
 				}
 			} else {
@@ -12114,6 +12203,40 @@ static bool test_v92_rate_b1_recovery(void)
 	return true;
 }
 
+/* Exercise the declared general-filter path through real CPd/E2u/B1u. A tiny
+ * second feed-forward tap makes the optional codec-only fit inapplicable;
+ * production negotiation and residual acquisition otherwise run unchanged. */
+static bool declare_general_filter;
+
+static bool test_v92_initial_echo_recovery(void)
+{
+	struct v92_echo_fixture fixture = {0};
+	CHECK(pcm_host_echo_init(&fixture.echo) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_seed_window_delay(&fixture.echo, FIXTURE_ECHO_DELAY) == PCM_HOST_ECHO_OK,
+	      "B1 echo fixture could not initialize");
+	for (unsigned i = 0; i < FIXTURE_ECHO_HISTORY; ++i)
+		CHECK(pcm_echo_reference_push(&fixture.echo.reference, fixture_echo_reference(i)) ==
+		      PCM_ECHO_REFERENCE_OK, "B1 echo fixture history failed");
+	fixture.echo.coefficients[0] = .12f;
+	fixture.echo.filter_ready = true;
+	fixture.echo.train_samples = PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
+	fixture.echo.train_peak = 8000;
+	CHECK(pcm_host_echo_is_valid(&fixture.echo), "B1 echo fixture is invalid");
+	const struct v92_upstream_offer offer = {
+		.peer_mask = (UINT32_C(1) << 10u) - 1u, .local_maximum = 10u, .expected = 10u,
+		.postcursor = .06, .payload_frames = 200, .b1_echo = &fixture,
+	};
+	declare_general_filter = true;
+	bool ok = run_v92_duplex_data(G711_LAW_PCMA, 3u, false, &offer);
+	declare_general_filter = false;
+	if (!ok)
+		return false;
+	CHECK(fixture.saw_primary_failure && fixture.accepted &&
+	      fixture.receiver.stopped_count != 0 && fixture.receiver.fit.shift == FIXTURE_ECHO_SHIFT,
+	      "duplex fixture never adopted its failed B1 echo alternate");
+	return true;
+}
+
 static bool test_v92_b1_rate_recovery(void)
 {
 	/* First prove that codec noise alone need not force the old 48k->40k
@@ -14253,11 +14376,6 @@ static bool test_conditioning_recovery(void)
 	return true;
 }
 
-/* Exercise the declared general-filter path through real CPd/E2u/B1u. A tiny
- * second feed-forward tap makes the optional codec-only fit inapplicable;
- * production negotiation and residual acquisition otherwise run unchanged. */
-static bool erasure_general_filter;
-
 enum v92_phase4_digital_station_result __real_v92_phase4_digital_station_select_upstream(
 	struct v92_phase4_digital_station *station,
 	const struct v92_cpd_parameters *cpd, const struct v92_upstream_plan *plan);
@@ -14266,7 +14384,7 @@ enum v92_phase4_digital_station_result __wrap_v92_phase4_digital_station_select_
 	struct v92_phase4_digital_station *station,
 	const struct v92_cpd_parameters *cpd, const struct v92_upstream_plan *plan)
 {
-	if (!erasure_general_filter)
+	if (!declare_general_filter)
 		return __real_v92_phase4_digital_station_select_upstream(station, cpd, plan);
 	struct v92_cpd_parameters declared = *cpd;
 	struct v92_cpd_filter *filter = &declared.filter[V92_CPD_PREFILTER_FEED_FORWARD];
@@ -14615,9 +14733,9 @@ static bool test_v92_erasure_calls(void)
 			.peer_mask = UINT32_C(1) << 9, .local_maximum = 10, .expected = 10,
 			.payload_frames = 200, .postcursor = .1,
 		};
-		erasure_general_filter = true;
+		declare_general_filter = true;
 		success = capture_v92_duplex_data(law, 3, false, &offer, NULL, 0, trained);
-		erasure_general_filter = false;
+		declare_general_filter = false;
 		if (!success)
 			break;
 		success = erasure_receiver_contracts(&trained->digital);
@@ -14728,6 +14846,7 @@ int main(int argc, char **argv)
 		{ "V.92 local and simultaneous rate exchange", test_v92_rate_request },
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
 		{ "V.92 failed B1 rate recovery", test_v92_b1_rate_recovery },
+		{ "V.92 failed B1 echo recovery preserves duplex payload", test_v92_initial_echo_recovery },
 		{ "V.92 rejected rate-exchange B1 recovery", test_v92_rate_b1_recovery },
 		{ "V.92 B1 recovery after echo retiming", test_v92_b1_timing_recovery },
 		{ "V.92 downstream reselection through retrain", test_v92_downstream_reselection },

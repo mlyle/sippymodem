@@ -19,7 +19,7 @@ enum {
 	B1_SAMPLES = V92_B1_ECHO_SAMPLES,
 	FIT_FIRST = 24, FIT_READY = V92_B1_ECHO_FIT_INPUTS, FIT_END = FIT_READY - 16,
 	FIT_SAMPLES = FIT_END - FIT_FIRST, HELD = 200,
-	SCORE_END = FIT_READY + 2 * HELD, CONSTELLATION_MODEL = 3,
+	SCORE_END = FIT_READY + 2 * HELD, CONSTELLATION_MODEL = 3, B1_WAVEFORM_MODEL,
 	RAW_FIT_FIRST = 184, RAW_FIT_END = 248, RAW_HELD = 148,
 };
 enum { IDLE, ACTIVE, FINISHED, COMMITTED };
@@ -30,7 +30,7 @@ _Static_assert(8 * (V92_B1_ECHO_INPUTS - RAW_FIT_END + 1) >= 5 * V92_B1_ECHO_INP
 
 static unsigned validation_samples(const struct v92_b1_echo_fit *fit)
 {
-	return fit->model == CONSTELLATION_MODEL ? RAW_HELD : HELD;
+	return fit->model >= CONSTELLATION_MODEL ? RAW_HELD : HELD;
 }
 
 static bool find_alignment(struct v92_b1_echo_fit *fit, const int16_t *ideal, const int16_t *host)
@@ -139,12 +139,6 @@ static bool tandem(const int16_t *x, const int16_t *y, double postcursor,
 	return true;
 }
 
-static const double *prediction_row(const struct v92_b1_echo_fit *fit,
-	const double *prediction, unsigned i)
-{
-	return prediction + (int)i + fit->alignment;
-}
-
 /* Score a raw-coordinate B1u against the mapping's signed alphabet. The
  * precoder may select different representatives; no prescribed waveform is
  * used as a reference. Geometry and coordinates stay frozen with the copy. */
@@ -169,17 +163,89 @@ static inline void score_raw(const struct v92_b1_echo *recovery,
 	}
 }
 
-static unsigned runner_up(const double *cost, unsigned chosen)
+static unsigned runner_up(const double *cost, unsigned bins, unsigned chosen)
 {
 	unsigned runner = chosen ? 0 : 1;
-	for (unsigned j = 0; j < BINS; ++j)
+	for (unsigned j = 0; j < bins; ++j)
 		if (j != chosen && cost[j] < cost[runner])
 			runner = j;
 	return runner;
 }
 
+/* The raw receiver may see an initial control word before the zero-state
+ * B1u sequence begins. Test both origins. The known waveform selects an
+ * extended echo hypothesis only; it never supplies decoder decisions. */
+static bool fit_b1_waveform(struct v92_b1_echo *recovery)
+{
+	if (recovery->radius == RADIUS)
+		return false;
+	const struct v92_upstream_data_rx *rx = &recovery->receiver;
+	const struct v92_pcm_mapping *mapping = &rx->decoder.mapping;
+	struct v92_pcm_frame_tx tx;
+	if (v92_pcm_frame_tx_init(&tx, mapping) != V92_PCM_FRAME_OK)
+		return false;
+	int16_t nominal[B1_SAMPLES];
+	uint8_t ones[V92_PCM_MAPPING_MAX_BITS];
+	memset(ones, 1, mapping->data_bits_per_frame);
+	for (unsigned i = 0; i < B1_SAMPLES; i += V92_PCM_MAPPING_FRAME_SYMBOLS) {
+		struct v92_pcm_frame frame;
+		if (v92_pcm_frame_encode_owned(mapping, &tx.state, ones, mapping->data_bits_per_frame,
+		    &frame) != V92_PCM_FRAME_OK)
+			return false;
+		memcpy(nominal + i, frame.u, sizeof(frame.u));
+	}
+
+	enum { N = RAW_FIT_END - RAW_FIT_FIRST };
+	double scale = rx->line.polarity / rx->line.plan.gain;
+	double best = DBL_MAX, dc = 0.;
+	unsigned chosen = 0, runner = 0, leading = 0;
+	for (unsigned lead = 0; lead <= V92_PCM_MAPPING_FRAME_SYMBOLS; lead += V92_PCM_MAPPING_FRAME_SYMBOLS) {
+		double sum[V92_B1_ECHO_BINS] = {0}, square[V92_B1_ECHO_BINS] = {0};
+		for (unsigned i = RAW_FIT_FIRST; i < RAW_FIT_END; ++i) {
+			double sample = recovery->raw[i] - nominal[i - lead] * scale;
+			const double *prediction = recovery->prediction + i + V92_B1_ECHO_BINS;
+			for (unsigned j = 0; j < V92_B1_ECHO_BINS; ++j) {
+				double residual = sample - *--prediction;
+				sum[j] += residual;
+				square[j] += residual * residual;
+			}
+		}
+		unsigned winner = 0;
+		for (unsigned j = 0; j < V92_B1_ECHO_BINS; ++j) {
+			square[j] -= sum[j] * sum[j] / N;
+			if (square[j] < square[winner])
+				winner = j;
+		}
+		if (square[winner] < best) {
+			best = square[winner];
+			chosen = winner;
+			runner = runner_up(square, V92_B1_ECHO_BINS, winner);
+			leading = lead;
+			dc = sum[winner] / N;
+		}
+	}
+	int shift = (int)chosen - V92_B1_ECHO_RADIUS;
+	/* Acquisition is only a predictor. Cap its residual at twice the
+	 * B1u verdict's energy and allow a small constant offset. Independent
+	 * holdouts use this fixed projection before the native B1u verdict. */
+	if ((shift >= -RADIUS && shift <= RADIUS) ||
+	    best > 2. * N * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR ||
+	    fabs(dc) > 4. * V92_DATA_MAX_RMS_ERROR)
+		return false;
+	struct v92_b1_echo_fit *fit = &recovery->fit;
+	*fit = (struct v92_b1_echo_fit){
+		.model = B1_WAVEFORM_MODEL, .shift = shift,
+		.runner = (int)runner - V92_B1_ECHO_RADIUS,
+	};
+	for (unsigned i = leading; i < B1_SAMPLES; ++i)
+		fit->target[i] = nominal[i - leading] * scale + dc;
+	return true;
+}
+
 static bool fit_raw(struct v92_b1_echo *recovery, const struct v92_cpd_distances *distances)
 {
+	if (fit_b1_waveform(recovery))
+		return true;
 	struct v92_b1_echo_fit *fit = &recovery->fit;
 	*fit = (struct v92_b1_echo_fit){ .model = CONSTELLATION_MODEL };
 	double cost[BINS] = {0};
@@ -188,13 +254,13 @@ static bool fit_raw(struct v92_b1_echo *recovery, const struct v92_cpd_distances
 	 * confirmation windows and replay from the original coding boundary. */
 	for (unsigned i = RAW_FIT_FIRST; i < RAW_FIT_END; ++i)
 		score_raw(recovery, distances, i, recovery->raw[i],
-			&recovery->prediction[i + 2 * RADIUS], cost, NULL);
+			&recovery->prediction[i + recovery->radius + RADIUS], cost, NULL);
 	unsigned chosen = 0;
 	for (unsigned j = 1; j < BINS; ++j)
 		if (cost[j] < cost[chosen])
 			chosen = j;
 	fit->shift = (int)chosen - RADIUS;
-	fit->runner = (int)runner_up(cost, chosen) - RADIUS;
+	fit->runner = (int)runner_up(cost, BINS, chosen) - RADIUS;
 	return isfinite(cost[chosen]);
 }
 
@@ -228,7 +294,7 @@ static bool fit_delay(struct v92_b1_echo_fit *fit, const int16_t *ideal, const i
 		const double *coefficient = m == 1 ? quant_beta : beta;
 		const int16_t *x = m == 1 ? post_codec : ideal;
 		for (unsigned i = FIT_FIRST; i < FIT_END; ++i) {
-			const double *p = prediction_row(fit, prediction, i);
+			const double *p = prediction + (int)i + fit->alignment;
 			double target = m ? linear_target(coefficient, x, i) : codec[i];
 			double residual = y[i] - target;
 			for (unsigned j = 0; j < BINS; ++j) {
@@ -245,7 +311,7 @@ static bool fit_delay(struct v92_b1_echo_fit *fit, const int16_t *ideal, const i
 			}
 		}
 		if (fit->model == m)
-			fit->runner = (int)runner_up(costs, fit->shift + RADIUS) - RADIUS;
+			fit->runner = (int)runner_up(costs, BINS, fit->shift + RADIUS) - RADIUS;
 	}
 	for (unsigned i = 0; i < B1_SAMPLES; ++i)
 		fit->target[i] = fit->model ? linear_target(
@@ -258,25 +324,26 @@ static void observe_delay(const struct v92_b1_echo *recovery, struct v92_b1_echo
 	const struct v92_cpd_distances *distances, const double *prediction, int16_t raw, unsigned i)
 {
 	const struct v92_b1_echo_fit *fit = &recovery->fit;
-	const double *p = prediction_row(fit, prediction, i);
+	const double *p = prediction + (int)i + fit->alignment + recovery->radius;
 	double good, old, runner;
 	if (fit->model == CONSTELLATION_MODEL) {
 		double error[BINS];
-		score_raw(recovery, distances, i, raw, p + 2 * RADIUS, ev->score, error);
+		score_raw(recovery, distances, i, raw, p + RADIUS, ev->score, error);
 		good = error[fit->shift + RADIUS];
 		old = error[RADIUS] - good;
 		runner = error[fit->runner + RADIUS] - good;
 	} else {
 		double r = raw - fit->target[i];
-		good = r - p[RADIUS - fit->shift];
+		int radius = fit->model == B1_WAVEFORM_MODEL ? V92_B1_ECHO_RADIUS : RADIUS;
+		good = r - p[-fit->shift];
 		good *= good;
-		old = r - p[RADIUS];
-		runner = r - p[RADIUS - fit->runner];
+		old = r - p[0];
+		runner = r - p[-fit->runner];
 		old = old * old - good;
 		runner = runner * runner - good;
-		for (unsigned j = 0; j < BINS; ++j) {
-			double error = r - p[2 * RADIUS - j];
-			ev->score[j] += error * error;
+		for (int j = -radius; j <= radius; ++j) {
+			double error = r - p[-j];
+			ev->score[j + radius] += error * error;
 		}
 	}
 	ev->old_sum += old;
@@ -296,10 +363,11 @@ static bool confirm_delay(const struct v92_b1_echo_fit *fit, const struct v92_b1
 {
 	if (ev->count != validation_samples(fit))
 		return false;
-	unsigned selected = fit->shift + RADIUS;
+	unsigned radius = fit->model == B1_WAVEFORM_MODEL ? V92_B1_ECHO_RADIUS : RADIUS;
+	unsigned selected = fit->shift + radius;
 	*old_z = evidence_z(ev->old_sum, ev->old_square, ev->count);
 	*runner_z = evidence_z(ev->runner_sum, ev->runner_square, ev->count);
-	for (unsigned i = 0; i < BINS; ++i)
+	for (unsigned i = 0; i <= 2 * radius; ++i)
 		if (i != selected && ev->score[i] <= ev->score[selected])
 			return false;
 	return (!fit->shift || *old_z > 1.5) && *runner_z > 1.5;
@@ -332,11 +400,18 @@ static bool start(struct v92_b1_echo *recovery, const struct pcm_host_echo *echo
 	if ((receiver->line.plan.observation != V92_PCM_FRAME_FILTER_OUTPUT &&
 	     receiver->line.plan.observation != V92_PCM_FRAME_CONSTELLATION) ||
 	    receiver->failed || receiver->line.received_frames || receiver->line.symbol_count ||
-	    receiver->line.delay_remaining || receiver->input.count || delay <= RADIUS)
+	    receiver->line.delay_remaining || receiver->input.count || delay <= RADIUS ||
+	    receiver->line.input_samples > UINT64_MAX - V92_B1_ECHO_INPUTS)
 		return false;
 	v92_b1_echo_reset(recovery);
 	recovery->clock = receiver->line.input_samples;
 	recovery->delay = delay;
+	recovery->radius = RADIUS;
+	if (receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION &&
+	    delay > V92_B1_ECHO_RADIUS &&
+	    delay <= PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES - V92_B1_ECHO_RADIUS &&
+	    echo->reference.fill >= delay + V92_B1_ECHO_RADIUS + PCM_HOST_ECHO_FILTER_TAPS - 1u)
+		recovery->radius = V92_B1_ECHO_RADIUS;
 	recovery->retained = echo->retained_delay_samples != 0;
 	memcpy(recovery->coefficients, frozen_coefficients(echo), sizeof(recovery->coefficients));
 	/* All receive state is pointer-free. Disable the primary's frame-work
@@ -383,17 +458,18 @@ static bool capture(struct v92_b1_echo *recovery, const struct pcm_host_echo *ec
 	if (i < FIT_READY)
 		recovery->cleaned[i] = cleaned;
 	recovery->code[i] = code;
-	/* Capture the initial shifted prediction prefix over 80 inputs. Future
+	const unsigned radius = recovery->radius;
+	/* Capture the initial shifted prediction prefix over at most 84 inputs. Future
 	 * received times use existing past TX: the frozen delay exceeds radius.
 	 * One new far-end prediction then extends the range on every input. */
-	for (unsigned work = 0; work < 8 && recovery->prefix < 2 * RADIUS; ++work, ++recovery->prefix)
-		if (!predict_at(recovery, echo, i, (int)recovery->prefix - RADIUS,
+	for (unsigned work = 0; work < 8 && recovery->prefix < 2 * radius; ++work, ++recovery->prefix)
+		if (!predict_at(recovery, echo, i, (int)recovery->prefix - (int)radius,
 			    &recovery->prediction[recovery->prefix]))
 			return false;
-	if (!predict_at(recovery, echo, i, (int)i + RADIUS, &recovery->prediction[2 * RADIUS + i]))
+	if (!predict_at(recovery, echo, i, (int)(i + radius), &recovery->prediction[2 * radius + i]))
 		return false;
-	if ((i >= RADIUS || recovery->prefix > i + RADIUS) &&
-	    sample_round_s16(raw - recovery->prediction[i + RADIUS]) != cleaned)
+	if ((i >= radius || recovery->prefix > i + radius) &&
+	    sample_round_s16(raw - recovery->prediction[i + radius]) != cleaned)
 		return false;
 	return true;
 }
@@ -402,7 +478,7 @@ static bool replay_one(struct v92_b1_echo *recovery, unsigned i)
 {
 	struct v92_upstream_data_frame frame;
 	int16_t cleaned = sample_round_s16(recovery->raw[i] -
-		recovery->prediction[(int)i + RADIUS - recovery->fit.shift]);
+		recovery->prediction[(int)(i + recovery->radius) - recovery->fit.shift]);
 	enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet_owned(
 		&recovery->receiver, recovery->code[i], cleaned, recovery->raw[i], true, &frame);
 	if (result == V92_UPSTREAM_DATA_RX_OK)
@@ -410,6 +486,26 @@ static bool replay_one(struct v92_b1_echo *recovery, unsigned i)
 	return result == V92_UPSTREAM_DATA_RX_FRAME &&
 	       v92_b1_quality_observe_owned(&recovery->quality, recovery->receiver.line.received_frames,
 		       recovery->receiver.line.host.gain, &frame) && !recovery->quality.failed;
+}
+
+static bool primary_at_input(struct v92_b1_echo *recovery,
+	const struct v92_upstream_data_rx *receiver)
+{
+	uint64_t clock = receiver->line.input_samples;
+	if (!receiver->failed)
+		return !recovery->stopped_count && clock == recovery->clock + recovery->count;
+	if (recovery->fit.model != B1_WAVEFORM_MODEL || !recovery->count)
+		return false;
+	/* The failed input never advanced the primary clock. Retain precisely
+	 * that boundary, even while the provisional decoder keeps consuming. */
+	if (!recovery->stopped_count) {
+		if (clock != recovery->clock + recovery->count - 1u ||
+		    receiver->line.received_frames != (recovery->count - 1u) / V92_PCM_MAPPING_FRAME_SYMBOLS ||
+		    receiver->line.symbol_count != (recovery->count - 1u) % V92_PCM_MAPPING_FRAME_SYMBOLS)
+			return false;
+		recovery->stopped_count = recovery->count;
+	}
+	return clock == recovery->clock + recovery->stopped_count - 1u;
 }
 
 bool v92_b1_echo_observe_owned(struct v92_b1_echo *recovery,
@@ -427,12 +523,12 @@ bool v92_b1_echo_observe_owned(struct v92_b1_echo *recovery,
 	if (recovery->stage == IDLE && !start(recovery, echo, receiver, distances))
 		goto decline;
 	if (!available || raw == INT16_MIN || raw == INT16_MAX ||
-	    recovery->count >= V92_B1_ECHO_INPUTS || receiver->failed || receiver->input.count ||
-	    receiver->line.input_samples != recovery->clock + recovery->count ||
+	    recovery->count >= V92_B1_ECHO_INPUTS || receiver->input.count ||
 	    receiver->line.plan.observation != recovery->receiver.line.plan.observation ||
 	    receiver->line.plan.gain != recovery->receiver.line.plan.gain ||
 	    receiver->line.plan.delay != recovery->receiver.line.plan.delay ||
-	    receiver->line.polarity != recovery->receiver.line.polarity || !model_unchanged(recovery, echo))
+	    receiver->line.polarity != recovery->receiver.line.polarity || !model_unchanged(recovery, echo) ||
+	    !primary_at_input(recovery, receiver))
 		goto decline;
 	unsigned i = recovery->count++;
 	if (!capture(recovery, echo, i, code, raw, cleaned))
@@ -441,7 +537,7 @@ bool v92_b1_echo_observe_owned(struct v92_b1_echo *recovery,
 	unsigned fit_at = raw_plan ? RAW_FIT_END : FIT_READY;
 	if (recovery->count == FIT_READY) {
 		for (unsigned k = 0; k < FIT_READY; ++k)
-			if (sample_round_s16(recovery->raw[k] - recovery->prediction[k + RADIUS]) != recovery->cleaned[k])
+			if (sample_round_s16(recovery->raw[k] - recovery->prediction[k + recovery->radius]) != recovery->cleaned[k])
 				goto decline;
 	}
 	if (recovery->count == fit_at &&
@@ -489,9 +585,15 @@ bool v92_b1_echo_accept_owned(struct v92_b1_echo *recovery, struct pcm_host_echo
 	    recovery->replayed != recovery->count || recovery->held[0].count != held ||
 	    recovery->held[1].count != held || recovery->receiver.failed || recovery->receiver.input.count ||
 	    !v92_b1_quality_is_ready(&recovery->quality, recovery->receiver.line.received_frames) ||
-	    !model_unchanged(recovery, echo) ||
-	    pcm_host_echo_retime(echo, recovery->fit.shift) != PCM_HOST_ECHO_OK)
+	    !model_unchanged(recovery, echo))
 		return false;
+	if (recovery->fit.model == B1_WAVEFORM_MODEL) {
+		uint32_t delay = (uint32_t)((int)recovery->delay + recovery->fit.shift);
+		if (pcm_host_echo_position_delay(echo, delay) != PCM_HOST_ECHO_OK)
+			return false;
+	} else if (pcm_host_echo_retime(echo, recovery->fit.shift) != PCM_HOST_ECHO_OK) {
+		return false;
+	}
 	recovery->stage = COMMITTED;
 	return true;
 }

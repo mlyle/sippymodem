@@ -5235,16 +5235,18 @@ static enum pcm_call_result observe_v92_data_quality(
 	return PCM_CALL_OK;
 }
 
-static void receive_b1_alternate(struct pcm_call *call,
+static bool receive_b1_alternate(struct pcm_call *call,
 	const struct pcm_call_b1_alternate *alternate)
 {
 	struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
-	if (alternate == NULL ||
+	bool stopped = pcm_call_failed_raw_b1_owned(call);
+	if (alternate == NULL || alternate->replaces_failed_primary != stopped ||
+	    (!stopped && path->upstream.failed) ||
 	    (!call->v92_rate_renegotiation_active &&
 	     path->upstream.line.plan.observation != V92_PCM_FRAME_CONSTELLATION) ||
 	    path->fast.stage != PCM_CALL_V92_FAST_IDLE || path->pending_media_loss ||
-	    path->quality_guard_samples || v92_peer_b1_received_owned(call))
-		return;
+	    (!stopped && path->quality_guard_samples) || v92_peer_b1_received_owned(call))
+		return false;
 	const struct v92_upstream_data_rx *rx = alternate->receiver;
 	const struct v92_b1_quality *quality = alternate->quality;
 	if (rx == NULL || quality == NULL || alternate->accept == NULL || rx->failed ||
@@ -5252,15 +5254,27 @@ static void receive_b1_alternate(struct pcm_call *call,
 	    rx->line.plan.gain != path->upstream.line.plan.gain ||
 	    rx->line.plan.delay != path->upstream.line.plan.delay ||
 	    rx->line.received_frames != V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ||
-	    rx->line.received_frames != path->upstream.line.received_frames ||
-	    rx->line.input_samples != path->upstream.line.input_samples ||
 	    rx->line.polarity != path->upstream.line.polarity ||
 	    rx->input.count || path->upstream.input.count ||
 	    !v92_pcm_mapping_equal(&rx->decoder.mapping, &path->upstream.decoder.mapping) ||
 	    !v92_upstream_data_rx_is_valid(rx) ||
 	    !v92_b1_quality_is_valid(quality, rx->line.received_frames) ||
 	    !v92_b1_quality_is_ready(quality, rx->line.received_frames))
-		return;
+		return false;
+	const struct v92_upstream_data_line *primary = &path->upstream.line;
+	if (stopped) {
+		/* The retained receiver must finish the same coding epoch at the
+		 * exact missing sample count. A replay may not jump either clock. */
+		if (primary->received_frames >= rx->line.received_frames ||
+		    rx->line.input_samples < primary->input_samples ||
+		    rx->line.input_samples - primary->input_samples !=
+			(rx->line.received_frames - primary->received_frames) *
+			V92_PCM_MAPPING_FRAME_SYMBOLS - primary->symbol_count)
+			return false;
+	} else if (rx->line.received_frames != primary->received_frames ||
+		   rx->line.input_samples != primary->input_samples) {
+		return false;
+	}
 	/* Everything fallible precedes publication. The physical owner commits
 	 * its confirmed delay before these pointer-free receive values replace
 	 * the rejected verdict. No payload has escaped this B1u epoch. */
@@ -5273,7 +5287,10 @@ static void receive_b1_alternate(struct pcm_call *call,
 		path->upstream.input.frame_budget = budget;
 		path->upstream.input.frame_credit = credit;
 		path->b1u_quality = *quality;
+		path->quality_guard_samples = 0;
+		return true;
 	}
+	return false;
 }
 
 static enum pcm_call_result receive_v92_frame(struct pcm_call *call,
@@ -5537,6 +5554,9 @@ static enum pcm_call_result v92_data_octet_owned(
 		}
 		if (received == V92_UPSTREAM_DATA_RX_FRAME)
 			return receive_v92_frame(call, &frame, emitted, alternate);
+		if (received_available && alternate != NULL && alternate->replaces_failed_primary &&
+		    receive_b1_alternate(call, alternate))
+			(void)v92_upstream_model_finish_b1u(&path->upstream);
 	}
 	return PCM_CALL_OK;
 }

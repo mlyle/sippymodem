@@ -1007,7 +1007,7 @@ static bool prepare_b1_echo(struct v90_datapump *datapump, uint8_t wire,
 	    call->stage == PCM_CALL_DATA_PATH && !pcm_call_uses_conventional_upstream(call)) {
 		const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
 		if (path->fast.stage == PCM_CALL_V92_FAST_IDLE && !path->pending_media_loss &&
-		    !path->quality_guard_samples &&
+		    (!path->quality_guard_samples || pcm_call_failed_raw_b1_owned(call)) &&
 		    (path->upstream.line.plan.observation == V92_PCM_FRAME_CONSTELLATION ||
 		     (call->v92_rate_renegotiation_active &&
 		      path->upstream.line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT)) &&
@@ -1076,6 +1076,7 @@ static bool process_octet(
 		const struct pcm_call_b1_alternate alternate = {
 			.receiver = &datapump->b1_echo.receiver,
 			.quality = &datapump->b1_echo.quality,
+			.replaces_failed_primary = datapump->b1_echo.stopped_count != 0u,
 			.accept = accept_b1_echo,
 			.context = &acceptance,
 		};

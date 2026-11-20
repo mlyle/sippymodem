@@ -3060,6 +3060,9 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 PCM_CALL_TEST_BINARY := $(BUILD_DIR)/test_pcm_call
 PCM_CALL_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v92_b1_sync.o \
+	$(BUILD_DIR)/v92_b1_echo.o $(BUILD_DIR)/pcm_host_echo.o \
+	$(BUILD_DIR)/pcm_echo_reference.o $(BUILD_DIR)/echo_timing.o \
+	$(BUILD_DIR)/gram_fit.o $(BUILD_DIR)/pam_distance.o \
 	$(BUILD_DIR)/v92_qc_analog.o $(BUILD_DIR)/v92_qc_digital.o \
 	$(BUILD_DIR)/v92_qc_signal.o $(BUILD_DIR)/v92_qc1.o \
 	$(BUILD_DIR)/v92_upstream_model.o $(BUILD_DIR)/v92_residual.o $(BUILD_DIR)/pcm_gain.o \

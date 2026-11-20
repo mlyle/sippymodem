@@ -121,6 +121,11 @@ enum pcm_host_echo_result pcm_host_echo_project_owned(
 enum pcm_host_echo_result pcm_host_echo_retime(
 	struct pcm_host_echo *echo, int delay_change_samples);
 
+/* Commit an independently confirmed absolute delay. The B1u owner bounds its
+ * search separately. The same frozen-model and history checks apply. */
+enum pcm_host_echo_result pcm_host_echo_position_delay(
+	struct pcm_host_echo *echo, uint32_t delay);
+
 /* Prediction is pure. TRAIN retains raw input while learning. FILTER keeps
  * coefficients frozen; independently qualified timing changes may reposition
  * the active model, including a retained model whose replacement is still
