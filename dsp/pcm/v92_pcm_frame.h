@@ -208,6 +208,13 @@ enum v92_pcm_frame_result v92_pcm_frame_encode_owned(
 	const uint8_t *bits, size_t bit_count,
 	struct v92_pcm_frame *frame);
 
+/* Encode one known source-one frame with the same downstream coding steps
+ * as payload. The owner has validated the disjoint mapping and state and
+ * owns the reset at the start of the B1u epoch. Rejection preserves outputs. */
+enum v92_pcm_frame_result v92_pcm_frame_encode_b1u_owned(
+	const struct v92_pcm_mapping *mapping, struct v92_pcm_frame_tx_state *state,
+	struct v92_pcm_frame *frame);
+
 /* Encode one RM or RM-prime frame (V.92 8.7.4) in the active data mapping.
  * Trellis, precoder and prefilter histories continue. Scrambler/differential
  * state is untouched; these signals specify modulus-output digits directly,
@@ -223,6 +230,11 @@ enum v92_pcm_frame_result v92_pcm_frame_encode_rm(
 enum v92_pcm_frame_result v92_pcm_frame_scale(
 	uint16_t four_times_gain_q0_16, int16_t upstream_level,
 	int32_t prefilter_output, int16_t *sample);
+
+/* Render one encoded frame to signed PCM. The owner supplies disjoint
+ * regions and space for a whole frame. Invalid gain leaves samples intact. */
+bool v92_pcm_frame_render_owned(const struct v92_pcm_mapping *mapping,
+	int16_t level, const struct v92_pcm_frame *frame, int16_t *samples);
 
 /* Check the known 48-frame B1u from zero coding memories with the shared
  * encoder and scaling arithmetic. False means invalid inputs or a waveform

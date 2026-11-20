@@ -561,6 +561,20 @@ enum v92_pcm_frame_result v92_pcm_frame_encode(
 		&transmitter->state, bits, bit_count, frame);
 }
 
+static enum v92_pcm_frame_result encode_scrambled_frame(
+	const struct v92_pcm_mapping *mapping, struct v92_pcm_frame_tx_state *state,
+	struct v92_pcm_frame_tx_state *next, const uint8_t *scrambled, struct v92_pcm_frame *frame)
+{
+	struct v92_pcm_frame encoded = { 0 };
+	if (v92_pcm_mapping_encode_owned(mapping, scrambled, mapping->data_bits_per_frame,
+	    &next->differential, encoded.digit, &encoded.frame_sign) != V92_PCM_MAPPING_OK ||
+	    !encode_digits(mapping, next, &encoded))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	*state = *next;
+	*frame = encoded;
+	return V92_PCM_FRAME_OK;
+}
+
 enum v92_pcm_frame_result v92_pcm_frame_encode_owned(
 	const struct v92_pcm_mapping *mapping,
 	struct v92_pcm_frame_tx_state *state,
@@ -568,7 +582,6 @@ enum v92_pcm_frame_result v92_pcm_frame_encode_owned(
 	struct v92_pcm_frame *frame)
 {
 	struct v92_pcm_frame_tx_state next;
-	struct v92_pcm_frame encoded = { 0 };
 	uint8_t scrambled[V92_PCM_MAPPING_MAX_BITS];
 
 	if (mapping == NULL || state == NULL || frame == NULL || bits == NULL)
@@ -581,16 +594,18 @@ enum v92_pcm_frame_result v92_pcm_frame_encode_owned(
 		    &next.scrambler, bits, bit_count, scrambled) !=
 	    V34_FRAMING_OK)
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	if (v92_pcm_mapping_encode_owned(
-		    mapping, scrambled, bit_count,
-		    &next.differential, encoded.digit,
-		    &encoded.frame_sign) != V92_PCM_MAPPING_OK)
+	return encode_scrambled_frame(mapping, state, &next, scrambled, frame);
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_encode_b1u_owned(
+	const struct v92_pcm_mapping *mapping, struct v92_pcm_frame_tx_state *state,
+	struct v92_pcm_frame *frame)
+{
+	struct v92_pcm_frame_tx_state next = *state;
+	uint8_t scrambled[V92_PCM_MAPPING_MAX_BITS];
+	if (!v92_b1_scramble(&next.scrambler, mapping->data_bits_per_frame, scrambled))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	if (!encode_digits(mapping, &next, &encoded))
-		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	*state = next;
-	*frame = encoded;
-	return V92_PCM_FRAME_OK;
+	return encode_scrambled_frame(mapping, state, &next, scrambled, frame);
 }
 
 enum v92_pcm_frame_result v92_pcm_frame_measure_b1u(
@@ -600,7 +615,6 @@ enum v92_pcm_frame_result v92_pcm_frame_measure_b1u(
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_tx_state state;
 	struct v92_b1u_measurement next = { 0 };
-	uint8_t ones[V92_PCM_MAPPING_MAX_BITS];
 
 	if (parameters == NULL || measurement == NULL ||
 	    memory_regions_overlap(parameters, sizeof(*parameters),
@@ -609,12 +623,9 @@ enum v92_pcm_frame_result v92_pcm_frame_measure_b1u(
 	if (v92_pcm_mapping_init(&mapping, law, parameters) != V92_PCM_MAPPING_OK ||
 	    !state_init(&state, parameters->trellis))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	memset(ones, 1, mapping.data_bits_per_frame);
 	for (unsigned index = 0; index < V92_B1U_FRAMES; ++index) {
 		struct v92_pcm_frame frame;
-		enum v92_pcm_frame_result result = v92_pcm_frame_encode_owned(
-			&mapping, &state, ones,
-			mapping.data_bits_per_frame, &frame);
+		enum v92_pcm_frame_result result = v92_pcm_frame_encode_b1u_owned(&mapping, &state, &frame);
 
 		if (result != V92_PCM_FRAME_OK)
 			return result;
@@ -650,23 +661,31 @@ enum v92_pcm_frame_result v92_pcm_frame_scale(
 	return V92_PCM_FRAME_OK;
 }
 
+bool v92_pcm_frame_render_owned(const struct v92_pcm_mapping *mapping,
+	int16_t level, const struct v92_pcm_frame *frame, int16_t *samples)
+{
+	int32_t gain_level = (int32_t)mapping->cpd.four_times_gain_q0_16 * level;
+	if (gain_level <= 0)
+		return false;
+	for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+		samples[i] = scale_gain_product(gain_level, frame->v[i]);
+	return true;
+}
+
 bool v92_pcm_frame_b1u_fits(
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level)
 {
 	struct v92_pcm_frame_tx_state state;
-	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 
 	if (!v92_pcm_mapping_is_valid(mapping) || upstream_level <= 0 ||
 	    !state_init(&state, mapping->cpd.trellis))
 		return false;
-	memset(bits, 1, mapping->data_bits_per_frame);
 	int32_t gain_level = (int32_t)mapping->cpd.four_times_gain_q0_16 * upstream_level;
 
 	for (unsigned index = 0; index < V92_B1U_FRAMES; ++index) {
 		struct v92_pcm_frame frame;
 
-		if (v92_pcm_frame_encode_owned(mapping, &state, bits,
-			    mapping->data_bits_per_frame, &frame) != V92_PCM_FRAME_OK)
+		if (v92_pcm_frame_encode_b1u_owned(mapping, &state, &frame) != V92_PCM_FRAME_OK)
 			return false;
 		for (unsigned symbol = 0; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 			int32_t scaled = scale_gain_product_unclipped(gain_level, frame.v[symbol]);
@@ -1576,11 +1595,8 @@ static enum v92_pcm_frame_result decode_frame(
 	struct v34_scrambler b1u_scrambler = receiver->b1u_scrambler;
 	uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
 	bool expect_b1u = receiver->b1u_frames < V92_B1U_FRAMES;
-	if (expect_b1u) {
-		memset(expected, 1, bit_count);
-		if (v34_scramble_unpacked_bits(&b1u_scrambler, expected, bit_count, expected) != V34_FRAMING_OK)
-			return V92_PCM_FRAME_INVALID_PARAMETERS;
-	}
+	if (expect_b1u && !v92_b1_scramble(&b1u_scrambler, bit_count, expected))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	/* LU bounds are fixed for this frame. Factor them out of the per-point
 	 * cell score while retaining the exact fixed-point rounding. */
 	int32_t minimum_gain = (int32_t)receiver->mapping.cpd.four_times_gain_q0_16 *

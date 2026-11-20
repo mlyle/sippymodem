@@ -4,7 +4,6 @@
 #include "gram_fit.h"
 #include "pam_distance.h"
 #include "sample_math.h"
-#include "v92_upstream_data_tx.h"
 
 #include <float.h>
 #include <math.h>
@@ -172,28 +171,47 @@ static unsigned runner_up(const double *cost, unsigned bins, unsigned chosen)
 	return runner;
 }
 
+/* Delay bins run from the newest projection to the oldest. The fit with an
+ * unknown constant also needs the residual sum in each bin. */
+static inline void score_waveform(const double *newest, unsigned bins,
+	double sample, double *cost, double *sum)
+{
+	const double *prediction = newest + 1;
+	for (unsigned j = 0; j < bins; ++j) {
+		double error = sample - *--prediction;
+		cost[j] += error * error;
+		if (sum != NULL)
+			sum[j] += error;
+	}
+}
+
+static bool b1_reference(struct v92_b1_echo *recovery, bool raw)
+{
+	const struct v92_pcm_frame_rx *decoder = &recovery->receiver.decoder;
+	struct v92_pcm_frame_tx tx;
+	if (v92_pcm_frame_tx_init(&tx, &decoder->mapping) != V92_PCM_FRAME_OK)
+		return false;
+	for (unsigned i = 0; i < B1_SAMPLES; i += V92_PCM_MAPPING_FRAME_SYMBOLS) {
+		struct v92_pcm_frame frame;
+		int16_t *samples = recovery->ideal + i;
+		if (v92_pcm_frame_encode_b1u_owned(&decoder->mapping, &tx.state, &frame) != V92_PCM_FRAME_OK)
+			return false;
+		if (raw)
+			memcpy(samples, frame.u, sizeof(frame.u));
+		else if (!v92_pcm_frame_render_owned(&decoder->mapping, decoder->upstream_level, &frame, samples))
+			return false;
+	}
+	return true;
+}
+
 /* The raw receiver may see an initial control word before the zero-state
  * B1u sequence begins. Test both origins. The known waveform selects an
  * extended echo hypothesis only; it never supplies decoder decisions. */
 static bool fit_b1_waveform(struct v92_b1_echo *recovery)
 {
-	if (recovery->radius == RADIUS)
+	if (recovery->radius == RADIUS || !b1_reference(recovery, true))
 		return false;
 	const struct v92_upstream_data_rx *rx = &recovery->receiver;
-	const struct v92_pcm_mapping *mapping = &rx->decoder.mapping;
-	struct v92_pcm_frame_tx tx;
-	if (v92_pcm_frame_tx_init(&tx, mapping) != V92_PCM_FRAME_OK)
-		return false;
-	int16_t nominal[B1_SAMPLES];
-	uint8_t ones[V92_PCM_MAPPING_MAX_BITS];
-	memset(ones, 1, mapping->data_bits_per_frame);
-	for (unsigned i = 0; i < B1_SAMPLES; i += V92_PCM_MAPPING_FRAME_SYMBOLS) {
-		struct v92_pcm_frame frame;
-		if (v92_pcm_frame_encode_owned(mapping, &tx.state, ones, mapping->data_bits_per_frame,
-		    &frame) != V92_PCM_FRAME_OK)
-			return false;
-		memcpy(nominal + i, frame.u, sizeof(frame.u));
-	}
 
 	enum { N = RAW_FIT_END - RAW_FIT_FIRST };
 	double scale = rx->line.polarity / rx->line.plan.gain;
@@ -202,13 +220,9 @@ static bool fit_b1_waveform(struct v92_b1_echo *recovery)
 	for (unsigned lead = 0; lead <= V92_PCM_MAPPING_FRAME_SYMBOLS; lead += V92_PCM_MAPPING_FRAME_SYMBOLS) {
 		double sum[V92_B1_ECHO_BINS] = {0}, square[V92_B1_ECHO_BINS] = {0};
 		for (unsigned i = RAW_FIT_FIRST; i < RAW_FIT_END; ++i) {
-			double sample = recovery->raw[i] - nominal[i - lead] * scale;
-			const double *prediction = recovery->prediction + i + V92_B1_ECHO_BINS;
-			for (unsigned j = 0; j < V92_B1_ECHO_BINS; ++j) {
-				double residual = sample - *--prediction;
-				sum[j] += residual;
-				square[j] += residual * residual;
-			}
+			double sample = recovery->raw[i] - recovery->ideal[i - lead] * scale;
+			score_waveform(recovery->prediction + i + 2 * V92_B1_ECHO_RADIUS,
+				V92_B1_ECHO_BINS, sample, square, sum);
 		}
 		unsigned winner = 0;
 		for (unsigned j = 0; j < V92_B1_ECHO_BINS; ++j) {
@@ -238,7 +252,7 @@ static bool fit_b1_waveform(struct v92_b1_echo *recovery)
 		.runner = (int)runner - V92_B1_ECHO_RADIUS,
 	};
 	for (unsigned i = leading; i < B1_SAMPLES; ++i)
-		fit->target[i] = nominal[i - leading] * scale + dc;
+		fit->target[i] = recovery->ideal[i - leading] * scale + dc;
 	return true;
 }
 
@@ -294,13 +308,9 @@ static bool fit_delay(struct v92_b1_echo_fit *fit, const int16_t *ideal, const i
 		const double *coefficient = m == 1 ? quant_beta : beta;
 		const int16_t *x = m == 1 ? post_codec : ideal;
 		for (unsigned i = FIT_FIRST; i < FIT_END; ++i) {
-			const double *p = prediction + (int)i + fit->alignment;
+			const double *p = prediction + ((int)i + fit->alignment + 2 * RADIUS);
 			double target = m ? linear_target(coefficient, x, i) : codec[i];
-			double residual = y[i] - target;
-			for (unsigned j = 0; j < BINS; ++j) {
-				double e = residual - p[2 * RADIUS - j];
-				costs[j] += e * e;
-			}
+			score_waveform(p, BINS, y[i] - target, costs, NULL);
 		}
 		for (unsigned j = 0; j < BINS; ++j) {
 			double cost = costs[j] * (m ? 1.03 : 1.);
@@ -321,10 +331,10 @@ static bool fit_delay(struct v92_b1_echo_fit *fit, const int16_t *ideal, const i
 }
 
 static void observe_delay(const struct v92_b1_echo *recovery, struct v92_b1_echo_evidence *ev,
-	const struct v92_cpd_distances *distances, const double *prediction, int16_t raw, unsigned i)
+	const struct v92_cpd_distances *distances, int16_t raw, unsigned i)
 {
 	const struct v92_b1_echo_fit *fit = &recovery->fit;
-	const double *p = prediction + (int)i + fit->alignment + recovery->radius;
+	const double *p = recovery->prediction + ((int)i + fit->alignment + (int)recovery->radius);
 	double good, old, runner;
 	if (fit->model == CONSTELLATION_MODEL) {
 		double error[BINS];
@@ -341,10 +351,7 @@ static void observe_delay(const struct v92_b1_echo *recovery, struct v92_b1_echo
 		runner = r - p[-fit->runner];
 		old = old * old - good;
 		runner = runner * runner - good;
-		for (int j = -radius; j <= radius; ++j) {
-			double error = r - p[-j];
-			ev->score[j + radius] += error * error;
-		}
+		score_waveform(p + radius, 2 * radius + 1, r, ev->score, NULL);
 	}
 	ev->old_sum += old;
 	ev->old_square += old * old;
@@ -358,19 +365,17 @@ static double evidence_z(double sum, double square, unsigned n)
 	return sum / sqrt(fmax(1e-18*n, square - sum*sum/n));
 }
 
-static bool confirm_delay(const struct v92_b1_echo_fit *fit, const struct v92_b1_echo_evidence *ev,
-	double *old_z, double *runner_z)
+static bool confirm_delay(const struct v92_b1_echo_fit *fit, const struct v92_b1_echo_evidence *ev)
 {
 	if (ev->count != validation_samples(fit))
 		return false;
 	unsigned radius = fit->model == B1_WAVEFORM_MODEL ? V92_B1_ECHO_RADIUS : RADIUS;
 	unsigned selected = fit->shift + radius;
-	*old_z = evidence_z(ev->old_sum, ev->old_square, ev->count);
-	*runner_z = evidence_z(ev->runner_sum, ev->runner_square, ev->count);
 	for (unsigned i = 0; i <= 2 * radius; ++i)
 		if (i != selected && ev->score[i] <= ev->score[selected])
 			return false;
-	return (!fit->shift || *old_z > 1.5) && *runner_z > 1.5;
+	return (!fit->shift || evidence_z(ev->old_sum, ev->old_square, ev->count) > 1.5) &&
+	       evidence_z(ev->runner_sum, ev->runner_square, ev->count) > 1.5;
 }
 
 void v92_b1_echo_reset(struct v92_b1_echo *recovery)
@@ -420,17 +425,10 @@ static bool start(struct v92_b1_echo *recovery, const struct pcm_host_echo *echo
 	recovery->receiver = *receiver;
 	recovery->receiver.input.frame_limited = false;
 	recovery->receiver.input.frame_budget = recovery->receiver.input.frame_credit = 0;
-	if (receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
+	if (receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION)
 		v92_cpd_distances_prepare(distances, &receiver->decoder.mapping.cpd);
-	} else {
-		struct v92_upstream_data_tx tx;
-		if (v92_upstream_data_tx_init(&tx, &receiver->decoder.mapping,
-		    receiver->decoder.upstream_level) != V92_UPSTREAM_DATA_TX_OK)
-			return false;
-		for (unsigned i = 0; i < B1_SAMPLES; ++i)
-			if (v92_upstream_data_tx_next(&tx, NULL, NULL, &recovery->ideal[i]) != V92_UPSTREAM_DATA_TX_OK)
-				return false;
-	}
+	else if (!b1_reference(recovery, false))
+		return false;
 
 	recovery->stage = ACTIVE;
 	return true;
@@ -548,13 +546,10 @@ bool v92_b1_echo_observe_owned(struct v92_b1_echo *recovery,
 	unsigned held = validation_samples(&recovery->fit);
 	if (i >= fit_at && i < SCORE_END) {
 		unsigned h = (i - fit_at) / held;
-		observe_delay(recovery, &recovery->held[h], distances, recovery->prediction, raw,
+		observe_delay(recovery, &recovery->held[h], distances, raw,
 			(unsigned)((int)i - recovery->fit.alignment));
-		if (recovery->held[h].count == held) {
-			double old_z, runner_z;
-			if (!confirm_delay(&recovery->fit, &recovery->held[h], &old_z, &runner_z))
-				goto decline;
-		}
+		if (recovery->held[h].count == held && !confirm_delay(&recovery->fit, &recovery->held[h]))
+			goto decline;
 	}
 	if (recovery->count < fit_at)
 		return false;

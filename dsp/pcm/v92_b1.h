@@ -9,6 +9,14 @@
 #include <math.h>
 #include <string.h>
 
+/* The caller owns the scrambler and provides room for one mapping frame. */
+static inline bool v92_b1_scramble(struct v34_scrambler *scrambler,
+	size_t count, uint8_t bits[V92_PCM_MAPPING_MAX_BITS])
+{
+	memset(bits, 1, count);
+	return v34_scramble_unpacked_bits(scrambler, bits, count, bits) == V34_FRAMING_OK;
+}
+
 /* Advance known source ones through an owned scrambler and mixed-radix
  * mapper. The mapping is already validated, state and outputs are disjoint,
  * and the caller owns the coding epoch. Trellis and precoder choices stay
@@ -18,9 +26,7 @@ static inline bool v92_b1_digits(
 	uint8_t *differential, uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS])
 {
 	uint8_t bits[V92_PCM_MAPPING_MAX_BITS], sign;
-	memset(bits, 1, mapping->data_bits_per_frame);
-	return v34_scramble_unpacked_bits(scrambler, bits,
-		mapping->data_bits_per_frame, bits) == V34_FRAMING_OK &&
+	return v92_b1_scramble(scrambler, mapping->data_bits_per_frame, bits) &&
 	       v92_pcm_mapping_encode_owned(mapping, bits,
 		mapping->data_bits_per_frame, differential, digits, &sign) == V92_PCM_MAPPING_OK;
 }

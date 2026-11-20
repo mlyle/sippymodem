@@ -520,9 +520,12 @@ static enum v92_upstream_data_rx_result receive_frame(
 	}
 	/* Combine known training inside the original LU cell. An early biased
 	 * frame must not exclude a level supported by later B1u observations. */
+	int16_t b1u_samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	if (b1u && !raw) {
 		if (v92_pcm_frame_rx_refine_level(&decoder, &model.level, &decision.frame,
-			    line->samples) != V92_PCM_FRAME_OK)
+			    line->samples) != V92_PCM_FRAME_OK ||
+		    !v92_pcm_frame_render_owned(&decoder.mapping, decoder.upstream_level,
+			    &decision.frame, b1u_samples))
 			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 		if (line->received_frames + 1u == V92_B1U_FRAMES)
 			memset(&model.level, 0, sizeof(model.level));
@@ -545,15 +548,8 @@ static enum v92_upstream_data_rx_result receive_frame(
 				return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 			continue;
 		}
-		if (b1u) {
-			int16_t sample;
-
-			if (v92_pcm_frame_scale(decoder.mapping.cpd.four_times_gain_q0_16,
-		decoder.upstream_level,
-		decision.frame.v[symbol], &sample) != V92_PCM_FRAME_OK)
-				return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
-			target.in_phase = g711_quantize(decoder.mapping.law, sample);
-		}
+		if (b1u)
+			target.in_phase = g711_quantize(decoder.mapping.law, b1u_samples[symbol]);
 		/* Preserve the original equalizer residual, including excursions
 		 * clipped only for the frame decoder's fixed-point input. */
 		double observed = line->observations[symbol].output.in_phase + line->output_bias;
