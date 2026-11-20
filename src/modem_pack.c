@@ -779,16 +779,14 @@ void modem_detector_start(struct modem *m)
 	m->unpack.data = 0xffffu; /* No flag history before this carrier epoch. */
 }
 
-void modem_detector_reframe(struct modem *m)
+static void modem_detector_reset_receive(struct modem *m)
 {
 	/* Retraining interrupts adjacency and physical bit alignment, not the
 	 * selected reply or the suspended detection timer (V.42 7.10/7.11). */
 	m->packer.detector.rx_count = 0;
 	if (!m->packer.detector.text.confirmed)
 		m->packer.detector.text = (struct raw_text_probe){0};
-	m->pack.bit = m->unpack.bit = 0;
-	m->pack.data = 0;
-	m->unpack.data = 0xffffu; /* No flag history before this carrier epoch. */
+	m->unpack = (struct bits_state){ .data = 0xffffu };
 }
 
 
@@ -1023,17 +1021,13 @@ int modem_hdlc_discard_partial_receive(struct modem *m)
 	return 0;
 }
 
-static void hdlc_reset_physical_framing(
-	struct modem *m, struct hdlc_state *h)
+static void hdlc_reset_receive(struct modem *m, struct hdlc_state *h)
 {
-	h->tx_frame = NULL;
-	h->tx_ones = 0;
 	hdlc_reset_receive_frame(h);
 	h->receive_health = (struct hdlc_receive_health){0};
 	h->raw_text = (struct raw_text_probe){0};
 	h->raw_bits = (struct bits_state){0};
-	m->pack.bit = m->unpack.bit = 0;
-	m->pack.data = m->unpack.data = 0;
+	m->unpack = (struct bits_state){0};
 }
 
 void modem_hdlc_start(struct modem *m)
@@ -1045,25 +1039,41 @@ void modem_hdlc_start(struct modem *m)
 	h->rx_frame = &h->_rx_frame;
 	h->rx_frame->buf  = h->_rx_buf;
 	h->rx_frame->size = sizeof(h->_rx_buf);
-	hdlc_reset_physical_framing(m, h);
+	m->pack = (struct bits_state){0};
+	hdlc_reset_receive(m, h);
         m->bit_timer_func = NULL;
 	m->bit_timer = 0;
 }
 
-int modem_hdlc_reframe(struct modem *m)
+int modem_reframe(struct modem *m, enum modem_reframe_direction direction)
 {
-	struct hdlc_state *h;
-
-	if (m == NULL)
+	if (m == NULL || direction < MODEM_REFRAME_RX || direction > MODEM_REFRAME_BOTH)
 		return -1;
-	h = &m->packer.hdlc;
-	if (h->rx_frame == NULL || h->rx_frame->buf == NULL ||
-	    h->rx_frame->size <= 0 ||
-	    (h->tx_frame != NULL && h->tx_complete == NULL))
-		return -1;
-	if (h->tx_frame != NULL) {
-		h->tx_complete(h->framer, h->tx_frame);
+	bool receive = direction & MODEM_REFRAME_RX;
+	bool transmit = direction & MODEM_REFRAME_TX;
+	if (m->get_bits == modem_detector_get_bits && m->put_bits == modem_detector_put_bits) {
+		if (receive)
+			modem_detector_reset_receive(m);
+		if (transmit)
+			m->pack = (struct bits_state){0};
+	} else if (!m->cfg.ec) {
+		/* Keep pending asynchronous transmit bits through a retrain. */
+		if (receive && m->get_bits == modem_async_get_bits && m->put_bits == modem_async_put_bits)
+			modem_async_retrain(m);
+	} else if (m->get_bits == modem_hdlc_get_bits && m->put_bits == modem_hdlc_put_bits) {
+		struct hdlc_state *h = &m->packer.hdlc;
+		if ((receive && (h->rx_frame == NULL || h->rx_frame->buf == NULL || h->rx_frame->size <= 0)) ||
+		    (transmit && h->tx_frame != NULL && h->tx_complete == NULL))
+			return -1;
+		if (transmit) {
+			if (h->tx_frame != NULL)
+				h->tx_complete(h->framer, h->tx_frame);
+			h->tx_frame = NULL;
+			h->tx_ones = 0;
+			m->pack = (struct bits_state){0};
+		}
+		if (receive)
+			hdlc_reset_receive(m, h);
 	}
-	hdlc_reset_physical_framing(m, h);
 	return 0;
 }

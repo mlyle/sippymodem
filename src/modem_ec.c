@@ -2146,34 +2146,20 @@ bool modem_ec_verify_tx(struct modem *m)
 	return start_tx_enquiry(l) == 0;
 }
 
-int modem_ec_resume_after_retrain(struct modem *m)
+int modem_ec_resume_after_retrain(struct modem *m,
+	enum modem_reframe_direction direction)
 {
-	struct lapm_state *l;
-
 	if (m == NULL)
 		return -1;
-	if (m->get_bits == modem_detector_get_bits &&
-	    m->put_bits == modem_detector_put_bits) {
-		modem_detector_reframe(m);
-		return 0;
-	}
-	if (!m->cfg.ec) {
-		/* New idle marks must not complete a pre-retrain receive byte.
-		 * Keep pending transmit framing; only hunt a fresh receive start. */
-		if (m->get_bits == modem_async_get_bits &&
-		    m->put_bits == modem_async_put_bits)
-			modem_async_retrain(m);
-		return 0;
-	}
-	if (m->get_bits != modem_hdlc_get_bits ||
+	if (!m->cfg.ec || m->get_bits != modem_hdlc_get_bits ||
 	    m->put_bits != modem_hdlc_put_bits)
-		return 0;
-	l = &m->ec.lapm;
+		return modem_reframe(m, direction);
+	struct lapm_state *l = &m->ec.lapm;
 	if (l->modem != m || l->state < LAPM_IDLE || l->state > LAPM_DATA ||
 	    l->ctrl_list == NULL ||
 	    l->tx_ctrl == NULL)
 		return -1;
-	if (modem_hdlc_reframe(m) != 0)
+	if (modem_reframe(m, direction) != 0)
 		return -1;
 	/* V.42 7.10.2/7.11 also suspend and resume protocol establishment.
 	 * Keep XID/SABME, compression selection and T401 progress; an unfinished

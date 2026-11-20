@@ -72,7 +72,7 @@ static inline bool datapump_complete_training(
 	if (dp->modem->dp != dp)
 		return true;
 	if (retrained)
-		modem_dp_reconnected(dp->modem);
+		modem_dp_reconnected(dp->modem, MODEM_REFRAME_BOTH);
 	else
 		modem_dp_connected(dp->modem);
 	return true;

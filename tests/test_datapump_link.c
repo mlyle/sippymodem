@@ -23,10 +23,12 @@ void modem_dp_connected(struct modem *modem)
 	++initial_links;
 }
 
-void modem_dp_reconnected(struct modem *modem)
+void modem_dp_reconnected(struct modem *modem,
+	enum modem_reframe_direction direction)
 {
 	(void)modem;
-	++resumed_links;
+	if (direction == MODEM_REFRAME_BOTH)
+		++resumed_links;
 }
 
 static bool test_training_completion_ownership(void)

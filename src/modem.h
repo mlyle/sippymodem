@@ -592,13 +592,19 @@ extern int  modem_async_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int  modem_async_put_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int modem_link_supports_v42(const struct modem *m);
 extern void modem_detector_start(struct modem *m);
-extern void modem_detector_reframe(struct modem *m);
 extern int  modem_detector_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int  modem_detector_put_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern void modem_hdlc_start(struct modem *m);
-extern int  modem_hdlc_reframe(struct modem *m);
 extern int  modem_hdlc_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int  modem_hdlc_put_bits(struct modem *m,int nbits,u8 *buf,int cnt);
+/* After a physical interruption, restart each direction before admitting
+ * data into it. A datapump that lets RX lead TX can reset RX separately. */
+enum modem_reframe_direction {
+	MODEM_REFRAME_RX = 1,
+	MODEM_REFRAME_TX = 2,
+	MODEM_REFRAME_BOTH = MODEM_REFRAME_RX | MODEM_REFRAME_TX,
+};
+extern int modem_reframe(struct modem *m, enum modem_reframe_direction direction);
 /* Established framed data only. An erased interval publishes no payload,
  * preserves TX/LAPM/compression and advances the ordinary receive bit clock. */
 extern bool modem_accepts_erased_bits(const struct modem *m);
@@ -634,7 +640,8 @@ extern bool modem_ec_cancel_retrain_request(struct modem *m, uint64_t grant);
 extern void modem_hdlc_receive_gap(struct modem *m, uint64_t end_sample);
 /* Consume a bounded request; the host invokes retrain outside DSP callbacks. */
 extern bool modem_ec_take_retrain_request(struct modem *m);
-extern int modem_ec_resume_after_retrain(struct modem *m);
+extern int modem_ec_resume_after_retrain(struct modem *m,
+	enum modem_reframe_direction direction);
 extern bool modem_ec_transmit_idle(const struct modem *m);
 extern void modem_ec_update_timer_rate(struct modem *m, uint64_t previous_rate);
 extern enum modem_ec_compression
@@ -644,7 +651,8 @@ extern const char *modem_active_modulation_name(const struct modem *m);
 
 /* status & config */
 extern void modem_dp_connected(struct modem *m);
-extern void modem_dp_reconnected(struct modem *m);
+extern void modem_dp_reconnected(struct modem *m,
+	enum modem_reframe_direction direction);
 extern void modem_update_status(struct modem *m, unsigned status);
 
 /* modem parameters access macros */

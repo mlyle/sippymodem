@@ -860,7 +860,7 @@ void modem_dp_connected(struct modem *m)
 		modem_update_status(m, STATUS_DP_LINK);
 }
 
-void modem_dp_reconnected(struct modem *m)
+void modem_dp_reconnected(struct modem *m, enum modem_reframe_direction direction)
 {
 	if (m == NULL)
 		return;
@@ -870,7 +870,7 @@ void modem_dp_reconnected(struct modem *m)
 		call_report_refresh(m);
 	}
 	if ((IS_STATE_ONLINE(m->state) || m->state == STATE_EC_ESTAB) &&
-	    modem_ec_resume_after_retrain(m) != 0) {
+	    modem_ec_resume_after_retrain(m, direction) != 0) {
 		modem_update_status(m, STATUS_EC_ERROR);
 		return;
 	}

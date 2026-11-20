@@ -370,6 +370,13 @@ void modem_async_retrain(struct modem *modem)
 	(void)modem;
 }
 
+int modem_reframe(struct modem *modem, enum modem_reframe_direction direction)
+{
+	(void)modem;
+	(void)direction;
+	return 0;
+}
+
 int modem_get_bits(
 	struct modem *modem, int bits_per_value, uint8_t *bits, int count)
 {

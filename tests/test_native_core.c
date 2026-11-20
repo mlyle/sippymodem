@@ -1959,7 +1959,7 @@ static bool test_v92_negotiated_lapm_bypasses_detection(void)
 						      (caller != 0),
 					      "negotiated LAPM lost its role-specific HDLC startup");
 				}
-				modem_dp_reconnected(modem);
+				modem_dp_reconnected(modem, MODEM_REFRAME_BOTH);
 			}
 			modem->dp = NULL;
 			modem->dsp_info.startup = MODEM_STARTUP_QC;
@@ -5964,7 +5964,7 @@ static bool test_lapm_directional_preamble(void)
 		      "LAPM preamble could not begin a flag");
 		m->tx_rate = 52000;
 		m->rx_rate = 24000;
-		CHECK(modem_ec_resume_after_retrain(m) == 0 &&
+		CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 &&
 		      m->packer.hdlc.tx_preamble_flags == 218 &&
 		      m->packer.hdlc.tx_preamble_complete != NULL &&
 		      m->packer.hdlc.get_tx_frame == NULL && m->bit_timer == 0,
@@ -6533,7 +6533,7 @@ static bool test_lapm_connected_sabme(void)
 		if (scenario == RETRAIN) {
 			m->get_bits = modem_hdlc_get_bits;
 			m->put_bits = modem_hdlc_put_bits;
-			CHECK(modem_ec_resume_after_retrain(m) == 0,
+			CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0,
 			      "SABME fixture could not resume physical retraining");
 		}
 		wire[0] = l->rsp_addr;
@@ -6636,7 +6636,7 @@ static bool test_lapm_initial_sabme_progress(void)
 				requests++;
 				CHECK(requests == 1 && !modem_ec_take_retrain_request(m),
 				      "SABME recovery was requested more than once");
-				CHECK(modem_ec_resume_after_retrain(m) == 0,
+				CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0,
 				      "SABME recovery could not resume the retained link");
 			}
 		}
@@ -6736,7 +6736,7 @@ static bool test_lapm_initial_sabme_deadline(void)
 			 * peer setup frames have been decoded during this gap. */
 			m->count += 30 * MODEM_RATE;
 			CHECK(!modem_ec_take_retrain_request(m) && l->state == 2 &&
-			      modem_ec_resume_after_retrain(m) == 0,
+			      modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0,
 			      "physical training consumed the confirmation interval");
 			start = m->count;
 		} else if (recovery == 1) {
@@ -6749,7 +6749,7 @@ static bool test_lapm_initial_sabme_deadline(void)
 			m->count = start + allowance - (4 - retry) * MODEM_RATE;
 			CHECK(receive_initial_sabme_retry(m), "confirmation interval ended early");
 			if (recovery == 0)
-				CHECK(modem_ec_resume_after_retrain(m) == 0 &&
+				CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 &&
 				      l->initial_sabme_sample == start,
 				      "duplicate resumption renewed the setup interval");
 			modem_process(m, receive, transmit, MODEM_FRAG);
@@ -8285,7 +8285,7 @@ static bool test_lapm_acknowledgement_window(void)
 		/* Exercise the response to a real post-retrain status enquiry,
 		 * including the clean-window case with peer flow control retained. */
 		l->peer_busy = 1;
-		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->retrain_poll,
+		CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && l->retrain_poll,
 		      "LAPM acknowledgement fixture did not poll after retrain");
 		outgoing = m->packer.hdlc.get_tx_frame(l);
 		CHECK(outgoing != NULL && outgoing->buf[1] == 1,
@@ -8557,7 +8557,7 @@ static bool test_lapm_idle_supervision(void)
 		      l->rtx_count == 2 && l->va == l->vs &&
 		      modem_ec_take_retrain_request(m) && !modem_ec_take_retrain_request(m),
 		      "unanswered idle polls did not request one physical recovery");
-		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->retrain_poll &&
+		CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && l->retrain_poll &&
 		      !l->peer_busy && l->rtx_count == 2 && l->stalled_retrain,
 		      "idle retrain did not resynchronize its outstanding enquiry");
 		wire[0] = l->cmd_addr;
@@ -8663,7 +8663,7 @@ static bool test_lapm_acknowledgement_progress(void)
 			      !modem_ec_take_retrain_request(m),
 			      "nonadvancing enquiries did not request exactly one recovery");
 			if (expiry == INFORMATION_POLLS) {
-				CHECK(modem_ec_resume_after_retrain(m) == 0 && l->stalled_polls == INFORMATION_POLLS &&
+				CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && l->stalled_polls == INFORMATION_POLLS &&
 				      l->stalled_retrain, "physical recovery reset data-progress history");
 			}
 			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL) {
@@ -8899,7 +8899,7 @@ static bool test_lapm_post_retrain_enquiry(void)
 		CHECK(l->state == 2 && m->state == 5, "fixture did not connect");
 		l->stalled_retrain = recovered;
 		void (*idle_timeout)(struct modem *) = m->bit_timer_func;
-		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->retrain_poll &&
+		CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && l->retrain_poll &&
 		      l->rtx_count == 1 && !l->peer_busy && l->va == l->vs &&
 		      m->bit_timer_func != idle_timeout,
 		      "clean post-retrain link did not verify outgoing reception");
@@ -8968,7 +8968,7 @@ static bool test_lapm_post_retrain_enquiry(void)
 			      observation.first_retry, "fresh ready feedback did not qualify the enquiry retry");
 		}
 
-		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->rtx_count == 2 &&
+		CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && l->rtx_count == 2 &&
 		      m->bit_timer == remaining && l->stalled_retrain == (bool)recovered &&
 		      !modem_ec_take_retrain_request(m), "resumption renewed the recovery budget");
 		if (heal) {
@@ -8994,7 +8994,7 @@ static bool test_lapm_post_retrain_enquiry(void)
 			CHECK(l->rtx_count == 3 && modem_ec_take_retrain_request(m) == !recovered &&
 			      !modem_ec_take_retrain_request(m), "post-retrain enquiry lost its remaining recovery");
 			remaining = m->bit_timer;
-			CHECK(modem_ec_resume_after_retrain(m) == 0 && l->rtx_count == 3 &&
+			CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && l->rtx_count == 3 &&
 			      m->bit_timer == remaining && l->stalled_retrain &&
 			      !modem_ec_take_retrain_request(m), "second resumption renewed recovery");
 			m->get_chars = NULL;
@@ -9048,7 +9048,7 @@ static bool test_lapm_tx_recovery_probe(void)
 		m->packer.hdlc.tx_complete(l, outgoing);
 		wire[1] = 0x73;
 		m->packer.hdlc.rx_complete(l, &incoming);
-		CHECK(l->state == 2 && m->state == 5 && modem_ec_resume_after_retrain(m) == 0,
+		CHECK(l->state == 2 && m->state == 5 && modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0,
 		      "recovery query fixture did not resume");
 		outgoing = m->packer.hdlc.get_tx_frame(l);
 		CHECK(outgoing != NULL && outgoing->buf[2] == 1, "query fixture lacks initial poll");
@@ -9084,7 +9084,7 @@ static bool test_lapm_tx_recovery_probe(void)
 			for (unsigned repeat = 0; repeat < 3; ++repeat)
 				CHECK(!modem_ec_probe_after_tx_recovery(m, 0) && lapm_states_equal(l, &before),
 				      "repeated recovery renewed the query allowance");
-			CHECK(modem_ec_resume_after_retrain(m) == 0 && l->rtx_count == before.rtx_count &&
+			CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && l->rtx_count == before.rtx_count &&
 			      m->bit_timer == remaining && !modem_ec_take_retrain_request(m),
 			      "resumption renewed a consumed recovery grant");
 			unsigned polls = scenario == NEW ? 2 : 1; /* Already emitted queries. */
@@ -9197,7 +9197,7 @@ static bool test_lapm_retrain_recovery_budget(void)
 		void (*timeout)(struct modem *) = m->bit_timer_func;
 		m->bit_timer = 1;
 		for (unsigned resume = 0; resume < 3; ++resume) {
-			CHECK(modem_ec_resume_after_retrain(m) == 0 &&
+			CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 &&
 			      m->bit_timer == 1 && m->bit_timer_func == timeout &&
 			      l->rtx_count == (int)(first_retry ? first_retry : 1) &&
 			      l->retrain_poll == (int)(first_retry ? first_retry : 1) && l->peer_busy == (int)full && l->state == 2 && m->state == 5 &&
@@ -9337,7 +9337,7 @@ static bool test_lapm_passive_establishment_recovery(void)
 					CHECK(modem_get_bits(m, 1, bits, 1) == 1, "SABME expiry failed");
 				CHECK(modem_ec_take_retrain_request(m) && !modem_ec_take_retrain_request(m) &&
 				      l->state == 0 && !l->rtx_count && !m->bit_timer &&
-				      modem_ec_resume_after_retrain(m) == 0 && !modem_ec_take_retrain_request(m),
+				      modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && !modem_ec_take_retrain_request(m),
 				      "SABME wait did not allow exactly one retained physical recovery");
 			} else if (reply == 3) {
 				while (m->bit_timer > 1) {
@@ -9365,7 +9365,7 @@ static bool test_lapm_passive_establishment_recovery(void)
 			CHECK(modem_ec_take_retrain_request(m) && !modem_ec_take_retrain_request(m) &&
 			      !m->bit_timer && l->state == 0 && m->state == 4 && !l->rtx_count,
 			      "passive wait did not request exactly one physical recovery");
-			CHECK(modem_ec_resume_after_retrain(m) == 0 &&
+			CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 &&
 			      !modem_ec_take_retrain_request(m) && !m->bit_timer,
 			      "physical resumption renewed passive recovery");
 		}
@@ -9430,7 +9430,7 @@ static bool test_lapm_establishment_recovery(void)
 		memcpy(response, outgoing->buf, (size_t)outgoing->size);
 		if (m->packer.hdlc.tx_frame != outgoing)
 			m->packer.hdlc.tx_complete(l, outgoing);
-		CHECK(modem_hdlc_reframe(m) == 0, "fixture could not finish its first control frame");
+		CHECK(modem_reframe(m, MODEM_REFRAME_BOTH) == 0, "fixture could not finish its first control frame");
 		struct lapm_v44_session session = l->v44_session;
 		operations.process = process_stalled_lapm_dp;
 		unsigned recovery_expiry = xid ? 9u : 3u;
@@ -9452,7 +9452,7 @@ static bool test_lapm_establishment_recovery(void)
 		operations.process = process_retrain_dp;
 		int remaining = m->bit_timer;
 		if (!late_reply)
-			modem_dp_reconnected(m);
+			modem_dp_reconnected(m, MODEM_REFRAME_BOTH);
 		CHECK(m->state == 4 && l->rtx_count == (int)expiries &&
 		      l->stalled_retrain == !late_reply &&
 		      m->bit_timer == remaining &&
@@ -9604,7 +9604,7 @@ static bool test_lapm_transmit_recovery_observations(void)
 	m->cfg.ec = 1;
 	CHECK(!modem_ec_get_tx_recovery(NULL, &observation[0]) &&
 	      !modem_ec_get_tx_recovery(m, NULL), "invalid observation query accepted");
-	CHECK(modem_hdlc_reframe(m) == 0 && modem_ec_get_tx_recovery(m, &observation[0]) &&
+	CHECK(modem_reframe(m, MODEM_REFRAME_BOTH) == 0 && modem_ec_get_tx_recovery(m, &observation[0]) &&
 	      !observation[0].receive_healthy, "physical reframe retained receive evidence");
 	uint8_t flag = 0x7e, bad[5] = {0};
 	for (unsigned i = 0; i < 10; ++i)
@@ -9710,7 +9710,7 @@ static bool test_lapm_deferred_recovery_grant(void)
 			CHECK(polls == (unsigned)l->rtx_count &&
 			      !modem_ec_probe_after_tx_recovery(m, owned),
 			      "duplicate confirmation emitted an uncounted poll");
-			CHECK(modem_ec_resume_after_retrain(m) == 0 && m->bit_timer == timer &&
+			CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && m->bit_timer == timer &&
 			      !modem_ec_take_retrain_request(m), "resumption renewed a granted recovery");
 			if (heal) {
 				uint8_t wire[] = { l->cmd_addr, 1, (uint8_t)((l->vs << 1) | 1) };
@@ -9831,7 +9831,7 @@ static bool test_lapm_stalled_retrain(void)
 		m->bit_timer /= 2;
 		int remaining = m->bit_timer;
 		void (*timeout)(struct modem *) = m->bit_timer_func;
-		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->stalled_retrain &&
+		CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && l->stalled_retrain &&
 		      l->rtx_count == (queued ? 2 : 3) && m->bit_timer == remaining &&
 		      m->bit_timer_func == timeout && l->sent_info == retained,
 		      "resume did not preserve T401, charge an emitted retry, and retain information");
@@ -9839,7 +9839,7 @@ static bool test_lapm_stalled_retrain(void)
 		CHECK(poll && poll->size == 3 && poll->buf[0] == l->cmd_addr &&
 		      poll->buf[1] == 1 && poll->buf[2] == 1, "no immediate RR/P=1 after physical recovery");
 		m->packer.hdlc.tx_complete(l, poll);
-		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->rtx_count == (queued ? 2 : 3) &&
+		CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && l->rtx_count == (queued ? 2 : 3) &&
 		      m->bit_timer == remaining && m->packer.hdlc.get_tx_frame(l) == NULL,
 		      "duplicate resume emitted a poll or released information without a Final");
 		uint8_t reply[] = { l->cmd_addr, 1, 1 }; /* RR F=1, N(R)=0 */
@@ -10381,7 +10381,7 @@ static bool test_lapm_retrain_stream(void)
 			uint8_t saved[sizeof(m->comp)];
 
 			memcpy(saved, &m->comp, sizeof(saved));
-			CHECK(modem_ec_resume_after_retrain(m) == 0 &&
+			CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 &&
 			      memcmp(saved, &m->comp, sizeof(saved)) == 0,
 			      "LAPM stream resumption changed compression history");
 			if (boundary == 2 && side == direction)
@@ -10457,8 +10457,8 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	modem->put_bits = modem_hdlc_put_bits;
 	saved_next = lapm->ctrl_list->next;
 	lapm->ctrl_list->next = lapm->tx_ctrl;
-	CHECK(modem_ec_resume_after_retrain(NULL) == -1 &&
-		      modem_ec_resume_after_retrain(modem) == -1 &&
+	CHECK(modem_ec_resume_after_retrain(NULL, MODEM_REFRAME_BOTH) == -1 &&
+		      modem_ec_resume_after_retrain(modem, MODEM_REFRAME_BOTH) == -1 &&
 		      modem->bit_timer == 0 && lapm->rtx_count == 0 &&
 		      lapm->peer_busy == 1 && lapm->vs == 5 && lapm->va == 5 &&
 		      lapm->vr == 6,
@@ -10470,7 +10470,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 		lapm->vr = 6;
 		modem->retrain_pending = local;
 		modem->bit_timer = 0;
-		modem_dp_reconnected(modem);
+		modem_dp_reconnected(modem, MODEM_REFRAME_BOTH);
 		CHECK(modem->retrain_pending == 0 &&
 			      lapm->state == LAPM_DATA_STATE &&
 			      lapm->peer_busy == 1 && lapm->vs == 5 &&
@@ -10514,7 +10514,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 			modem->packer.hdlc.rx.bit_count = 3;
 			modem->packer.hdlc.rx_frame->count = 2;
 			modem->retrain_pending = 1;
-			modem_dp_reconnected(modem);
+			modem_dp_reconnected(modem, MODEM_REFRAME_BOTH);
 			CHECK(modem->retrain_pending == 0 &&
 				      lapm->state == LAPM_DATA_STATE &&
 				      lapm->peer_busy == 0 && lapm->vs == 5 &&
@@ -10583,7 +10583,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	modem->pack.bit = 3;
 	modem->unpack.bit = 5;
 	modem->retrain_pending = 1;
-	modem_dp_reconnected(modem);
+	modem_dp_reconnected(modem, MODEM_REFRAME_BOTH);
 	CHECK(modem->retrain_pending == 0 && !lapm->peer_busy &&
 		      lapm->retrain_poll && lapm->rtx_count == 1 &&
 		      modem->bit_timer > 0 && lapm->vs == 5 && lapm->va == 5 &&
@@ -10635,7 +10635,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	modem->packer.hdlc.rx_frame->count = 2;
 	modem->retrain_pending = 1;
 	modem->bit_timer = 0;
-	modem_dp_reconnected(modem);
+	modem_dp_reconnected(modem, MODEM_REFRAME_BOTH);
 	CHECK(lapm->state == LAPM_DATA_STATE && lapm->vs == 6 &&
 		      lapm->va == 5 && lapm->vr == 6 && lapm->peer_busy == 0 &&
 		      lapm->retrain_poll == 1 &&
@@ -10723,7 +10723,7 @@ static bool test_raw_retrain_discards_partial_receive(void)
 		      "raw retrain prefix was not consumed");
 		m.pack.bit = 7;
 		m.pack.data = 0x1234;
-		CHECK(modem_ec_resume_after_retrain(&m) == 0 &&
+		CHECK(modem_ec_resume_after_retrain(&m, MODEM_REFRAME_BOTH) == 0 &&
 		      m.pack.bit == 7 && m.pack.data == 0x1234,
 		      "raw retrain discarded pending transmit framing");
 		CHECK(modem_put_bits(&m, 1, (uint8_t *)idle, sizeof(idle)) == sizeof(idle) &&
@@ -10789,7 +10789,7 @@ static bool test_retrain_preserves_detection(void)
 		modem->unpack.bit = 5;
 		modem->bit_timer = 17;
 		timeout = modem->bit_timer_func;
-		modem_dp_reconnected(modem);
+		modem_dp_reconnected(modem, MODEM_REFRAME_BOTH);
 		CHECK(modem->state == TEST_STATE_EC_ESTAB &&
 		      lapm->state == 0 && lapm->v44_session.phase != LAPM_V44_COMMAND_PENDING &&
 		      modem->get_bits == modem_detector_get_bits &&
@@ -10926,7 +10926,7 @@ static bool test_lapm_timer_follows_rate_changes(void)
 		      "LAPM timer receive failed");
 	}
 	CHECK(m->bit_timer == 624 && m->ec.lapm.rtx_count == 0 &&
-	      modem_ec_resume_after_retrain(m) == 0 && m->bit_timer == 624,
+	      modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && m->bit_timer == 624,
 	      "LAPM timeout expired early or changed on physical resume");
 	CHECK(modem_get_bits(m, 1, bits, 144) == 144,
 	      "final LAPM timer transmit failed");
@@ -11151,7 +11151,7 @@ static bool test_retrain_preserves_lapm_establishment(void)
 					int retries = l->rtx_count, remaining = resuming->bit_timer;
 					void (*timeout)(struct modem *) = resuming->bit_timer_func;
 
-					modem_dp_reconnected(resuming);
+					modem_dp_reconnected(resuming, MODEM_REFRAME_BOTH);
 					CHECK(l->state == state &&
 					      l->rtx_count == retries && l->v44_path == path &&
 					      lapm_v44_sessions_equal(&l->v44_session, &session) &&
@@ -12000,7 +12000,7 @@ static bool test_v42_late_protocol_after_retrain(void)
 		if (tick == 260) {
 			int remaining = m->bit_timer;
 
-			modem_dp_reconnected(m);
+			modem_dp_reconnected(m, MODEM_REFRAME_BOTH);
 			CHECK(m->bit_timer == remaining && m->get_bits == modem_detector_get_bits,
 			      "physical retraining renewed or abandoned detection");
 		}
@@ -12131,7 +12131,7 @@ static bool test_lapm_raw_text_fallback(void)
 			}
 			CHECK(modem_put_bits(m, 8, &flag, 1) == 1, "frame end failed");
 			if (test == REFRAMED)
-				CHECK(modem_ec_resume_after_retrain(m) == 0, "frame resume failed");
+				CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0, "frame resume failed");
 		}
 		/* Leave flag framing before the peer's raw startup text. */
 		memset(bits, 1, 32);

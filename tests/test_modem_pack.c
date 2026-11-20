@@ -604,6 +604,8 @@ static bool test_v42_requires_adjacent_synchronous_flags(void)
 			struct modem modem = {
 				.name = "V.42 flag boundary", .caller = caller,
 				.tx_rate = 9600, .cfg = { .ec = 1, .ec_detector = 1 },
+				.get_bits = modem_detector_get_bits,
+				.put_bits = modem_detector_put_bits,
 			};
 			uint8_t bits[64];
 
@@ -631,7 +633,8 @@ static bool test_v42_requires_adjacent_synchronous_flags(void)
 				modem_detector_start(&modem);
 				CHECK(receive_detection_bits(&modem, bits, split, width),
 				      "pre-retrain flags stopped");
-				modem_detector_reframe(&modem);
+				CHECK(modem_reframe(&modem, MODEM_REFRAME_BOTH) == 0,
+				      "detector could not restart framing");
 				CHECK(receive_detection_bits(
 					      &modem, bits + split, sizeof(bits) - split, width) &&
 				      modem.packer.detector.ec_enable == 0,
@@ -881,6 +884,52 @@ static bool test_hdlc_round_trip(void)
 	return true;
 }
 
+static bool test_hdlc_receive_before_transmit_resume(void)
+{
+	static const uint8_t data[] = { 0x01, 0x00, 0x00, 0xfe, 0x7e, 0xc2 };
+	struct hdlc_fixture sender = { .payload = data, .payload_length = sizeof(data) };
+	struct modem transmitter = { .name = "peer HDLC transmitter" };
+	uint8_t wire[96];
+
+	modem_hdlc_start(&transmitter);
+	transmitter.packer.hdlc.framer = &sender;
+	transmitter.packer.hdlc.get_tx_frame = next_transmit_frame;
+	CHECK(modem_hdlc_get_bits(&transmitter, 1, wire, sizeof(wire)) == sizeof(wire),
+	      "could not encode the peer frame");
+	for (int split = 20; split <= 60; ++split) {
+		struct hdlc_fixture transfer = { .payload = data, .payload_length = sizeof(data) };
+		struct modem receiver = {
+			.name = "split HDLC retrain", .cfg = { .ec = 1 },
+			.get_bits = modem_hdlc_get_bits, .put_bits = modem_hdlc_put_bits,
+		};
+		modem_hdlc_start(&receiver);
+		struct hdlc_state *hdlc = &receiver.packer.hdlc;
+		hdlc->framer = &transfer;
+		hdlc->rx_complete = receive_complete;
+		hdlc->tx_complete = transmit_complete;
+		hdlc->get_tx_frame = next_transmit_frame;
+		uint8_t bit;
+		CHECK(modem_hdlc_get_bits(&receiver, 1, &bit, 1) == 1 &&
+		      hdlc->tx_frame == &transfer.transmit_frame && receiver.pack.bit == 7 &&
+		      modem_hdlc_put_bits(&receiver, 1, wire, split) == split && hdlc->rx.in_frame,
+		      "could not start both frames before retrain");
+		CHECK(modem_reframe(&receiver, MODEM_REFRAME_RX) == 0 && !hdlc->rx.in_frame &&
+		      modem_hdlc_put_bits(&receiver, 1, wire + split, sizeof(wire) - split) ==
+			      (int)sizeof(wire) - split && transfer.receive_completions == 0 &&
+		      hdlc->tx_frame == &transfer.transmit_frame && transfer.transmit_completions == 0 &&
+		      receiver.pack.bit == 7,
+		      "receive restart completed stale RX or changed the TX frame at bit %d", split);
+		CHECK(modem_hdlc_put_bits(&receiver, 1, wire, split) == split && hdlc->rx.in_frame &&
+		      modem_reframe(&receiver, MODEM_REFRAME_TX) == 0 &&
+		      hdlc->tx_frame == NULL && transfer.transmit_completions == 1 && receiver.pack.bit == 0 &&
+		      modem_hdlc_put_bits(&receiver, 1, wire + split, sizeof(wire) - split) ==
+			      (int)sizeof(wire) - split && transfer.receive_completions == 1 &&
+		      transfer.received_length == sizeof(data) && memcmp(transfer.received, data, sizeof(data)) == 0,
+		      "TX restart clipped the new RX frame at bit %d", split);
+	}
+	return true;
+}
+
 static bool test_hdlc_minimum_frame_size(void)
 {
 	static const uint8_t payload[] = { 0x03, 0x73, 0x00 };
@@ -990,6 +1039,7 @@ int main(void)
 		  test_v42_rejects_bad_detection_stops },
 		{ "HDLC transmit preamble", test_hdlc_transmit_preamble },
 		{ "HDLC round trip", test_hdlc_round_trip },
+		{ "HDLC receive before transmit resumes", test_hdlc_receive_before_transmit_resume },
 		{ "HDLC minimum frame size", test_hdlc_minimum_frame_size },
 		{ "HDLC literal wire fragments and FCS recovery", test_hdlc_wire_fragments },
 		{ "V.42 text framing", test_v42_text_requires_framing },

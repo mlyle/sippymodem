@@ -353,7 +353,7 @@ static bool late_v42_answer_after_retrain(void)
 		for (unsigned frame = 0; frame < delay_frames; ++frame) {
 			if (frame == 520) {
 				int remaining = modem->bit_timer;
-				EXPECT(modem_ec_resume_after_retrain(modem) == 0);
+				EXPECT(modem_ec_resume_after_retrain(modem, MODEM_REFRAME_BOTH) == 0);
 				EXPECT(modem->bit_timer == remaining);
 			}
 			EXPECT(modem_get_bits(modem, 1, transmitted, 12) == 12);
@@ -584,7 +584,7 @@ static bool retained_call_report(void)
 	EXPECT(modem->put_chars(modem, "xy", 2) == 1);
 	int16_t receive[160] = { 0 }, transmit[160];
 	modem_process(modem, receive, transmit, 160);
-	modem_dp_reconnected(modem);
+	modem_dp_reconnected(modem, MODEM_REFRAME_BOTH);
 	modem->tx_rate = 14400;
 	strcpy(report_progress, "online/receiver");
 	modem_note_disconnect(modem, false, "peer ended call");

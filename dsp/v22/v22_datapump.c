@@ -1239,6 +1239,10 @@ static int observe_retrain_signal(
 
 static int start_retrain_signal(struct v22_datapump *datapump)
 {
+	/* A new S1 interrupts receive framing. The peer can resume sending
+	 * data before our own transmit mark ends. */
+	if (modem_reframe(datapump->dp.modem, MODEM_REFRAME_RX) != 0)
+		return -1;
 	if (transmit_uses_v22bis_symbols(datapump))
 		datapump->transmit_quadrant =
 			datapump->v22bis_encoder.phase_quadrant;
@@ -1306,10 +1310,6 @@ static int begin_retrain(
 	datapump->carrier_return_hold_samples = 0;
 	reset_retrain_receive_progress(datapump);
 	datapump->retrain_peer_signal_received = peer_signal_received;
-	/* Keep queued transmit framing, but discard a partial receive character
-	 * across the physical-layer discontinuity.  LAPM owns its own state. */
-	if (!datapump->dp.modem->cfg.ec)
-		modem_async_retrain(datapump->dp.modem);
 	if (start_retrain_signal(datapump) != 0)
 		return -1;
 	datapump->dp.status = DPSTAT_OK;
@@ -1328,8 +1328,6 @@ static int restart_retrain(struct v22_datapump *datapump)
 	datapump->phase_samples = 0;
 	reset_retrain_receive_progress(datapump);
 	datapump->retrain_peer_signal_received = false;
-	if (!datapump->dp.modem->cfg.ec)
-		modem_async_retrain(datapump->dp.modem);
 	return start_retrain_signal(datapump);
 }
 
@@ -1362,8 +1360,6 @@ static int repeat_peer_retrain_signal(
 		return -1;
 	datapump->phase_samples = 0;
 	reset_retrain_receive_progress(datapump);
-	if (!datapump->dp.modem->cfg.ec)
-		modem_async_retrain(datapump->dp.modem);
 	return start_retrain_signal(datapump);
 }
 
@@ -1614,10 +1610,10 @@ static int enter_link(struct v22_datapump *datapump)
 	discard_retrain_candidate(datapump);
 	datapump->retrain_peer_signal_received = false;
 	datapump->dp.status = DPSTAT_CONNECT;
-	/* Reframe retained LAPM before the next sample can deliver data. An
-	 * initial child link is still published by its negotiation parent. */
+	/* RX has already crossed the retrain boundary and may hold a partial
+	 * frame. Restart TX before the next symbol requests its first bits. */
 	if (retrained && datapump->dp.modem->dp == &datapump->dp)
-		modem_dp_reconnected(datapump->dp.modem);
+		modem_dp_reconnected(datapump->dp.modem, MODEM_REFRAME_TX);
 	return 0;
 }
 
