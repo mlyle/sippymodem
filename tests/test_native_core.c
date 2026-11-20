@@ -9574,12 +9574,24 @@ static bool test_lapm_transmit_recovery_observations(void)
 	l->stalled_polls = 1;
 	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) &&
 	      observation[0].first_retry && observation[0].peer_noack &&
-	      observation[0].peer_poll_sample == m->count,
+	      !observation[0].first_startup_retry && observation[0].peer_poll_sample == m->count,
 	      "valid unanswered command poll did not qualify existing first retry");
 	CHECK(modem_ec_get_tx_recovery(ends[1], &observation[1]) &&
 	      !observation[1].peer_noack && !observation[1].receive_healthy &&
 	      !observation[1].first_retry,
 	      "receive feedback leaked across modem instances");
+	/* Only the first outgoing I frame after real inbound information can
+	 * qualify on idle flags without a numbered peer poll. */
+	m->put_chars = scripted_lapm_sink;
+	lapm_sink.result = 1;
+	lapm_sink.length = 0;
+	uint8_t greeting[] = { l->rsp_addr, 0, 0, 'G' };
+	frame_t peer_information = { .buf = greeting, .count = sizeof(greeting) };
+	m->packer.hdlc.rx_complete(l, &peer_information);
+	CHECK(lapm_sink.length == 1 && lapm_sink.data[0] == 'G' &&
+	      modem_ec_get_tx_recovery(m, &observation[0]) &&
+	      observation[0].first_startup_retry && !observation[0].receive_idle,
+	      "first missing acknowledgement lost its startup context");
 	struct modem *other = ends[1];
 	uint8_t late[] = { other->ec.lapm.cmd_addr, 1, 3 };
 	frame_t unsolicited = { .buf = late, .count = sizeof(late) };
@@ -9591,7 +9603,8 @@ static bool test_lapm_transmit_recovery_observations(void)
 	wire[1] = 5;
 	m->packer.hdlc.rx_complete(l, &incoming);
 	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) &&
-	      !observation[0].first_retry, "peer RNR permitted physical intervention");
+	      !observation[0].first_retry && !observation[0].first_startup_retry,
+	      "peer RNR permitted physical intervention");
 	wire[0] = l->cmd_addr;
 	wire[1] = 1;
 	wire[2] = 3;
@@ -9617,6 +9630,15 @@ static bool test_lapm_transmit_recovery_observations(void)
 	CHECK(l->va == 0 && modem_ec_get_tx_recovery(m, &observation[0]) &&
 	      observation[0].ack_generation == generation + 128 && !observation[0].peer_noack,
 	      "sequence wrap revived stale recovery evidence");
+	lapm_source.offset = 0;
+	frame_t *wrapped = m->packer.hdlc.get_tx_frame(l);
+	CHECK(wrapped != NULL && wrapped->buf[1] == 0 && l->vs == 1,
+	      "sequence-wrap fixture did not send I(0) again");
+	m->packer.hdlc.tx_complete(l, wrapped);
+	m->bit_timer_func(m);
+	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) &&
+	      observation[0].first_retry && !observation[0].first_startup_retry,
+	      "wrapped I(0) qualified as the first information retry");
 	modem_hdlc_receive_gap(m, m->count + 80);
 	m->packer.hdlc.rx_complete(l, &incoming);
 	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) &&
@@ -9640,11 +9662,11 @@ static bool test_lapm_transmit_recovery_observations(void)
 	uint8_t flag = 0x7e, bad[5] = {0};
 	for (unsigned i = 0; i < 10; ++i)
 		CHECK(modem_hdlc_put_bits(m, 8, &flag, 1) == 1, "idle observation failed");
-	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) && observation[0].receive_healthy,
+	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) && observation[0].receive_healthy && observation[0].receive_idle,
 	      "verified idle flags did not restore receive health");
 	CHECK(modem_hdlc_put_bits(m, 8, bad, sizeof(bad)) == sizeof(bad) &&
 	      modem_hdlc_put_bits(m, 8, &flag, 1) == 1 &&
-	      modem_ec_get_tx_recovery(m, &observation[0]) && !observation[0].receive_healthy,
+	      modem_ec_get_tx_recovery(m, &observation[0]) && !observation[0].receive_healthy && !observation[0].receive_idle,
 	      "bad FCS retained healthy receive evidence");
 	for (unsigned side = 0; side < 2; ++side)
 		modem_delete(ends[side]);

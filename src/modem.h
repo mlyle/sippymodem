@@ -278,7 +278,7 @@ struct lapm_state {
         /* Valid peer feedback for physical recovery; never infer ACK progress
          * from a wrapped seven-bit sequence number. */
         uint64_t ack_generation, peer_noack_sample;
-        bool peer_noack;
+        bool peer_noack, acknowledged_information;
         unsigned long established_sample;
         bool received_information, sent_information;
         u8  cmd_addr;
@@ -627,6 +627,7 @@ struct modem_tx_recovery {
 	uint64_t ack_generation, peer_poll_sample, receive_sample, grant_generation;
 	bool first_retry, peer_noack, receive_healthy;
 	bool second_information_retry, flow_controlled, recovery_active;
+	bool first_startup_retry, receive_idle;
 };
 extern bool modem_ec_get_tx_recovery(const struct modem *m,
 	struct modem_tx_recovery *observation);

@@ -5,12 +5,12 @@
 #include "modem.h"
 #include "v90_cp.h"
 
-/* Owned by one host datapump. A timing hypothesis needs peer feedback at
- * the first retry, or the already due full-recovery grant for a quiet peer. */
+/* One datapump owns the timing hypothesis and each pending recovery. */
 struct pcm_tx_recovery {
 	uint64_t ack_generation, event_sample, poll_sample, deferred_grant;
+	uint64_t startup_poll_sample;
 	unsigned phase;
-	bool used, pending, applied;
+	bool used, pending, applied, startup_attempted;
 };
 
 static inline void pcm_tx_recovery_progress(struct pcm_tx_recovery *recovery,
@@ -30,12 +30,18 @@ static inline void pcm_tx_recovery_arm(struct pcm_tx_recovery *recovery, uint64_
 	recovery->poll_sample = now;
 }
 
+static inline bool pcm_tx_recovery_waited(uint64_t now, uint64_t poll_sample,
+	uint32_t delay_samples)
+{
+	return now >= poll_sample && now - poll_sample >=
+		MODEM_RATE / 10 + delay_samples;
+}
+
 static inline bool pcm_tx_recovery_ready(const struct pcm_tx_recovery *recovery,
 	uint64_t now, uint16_t round_trip_delay_samples)
 {
-	return recovery->pending && now >= recovery->poll_sample &&
-		now - recovery->poll_sample >=
-			MODEM_RATE / 10 + (uint32_t)round_trip_delay_samples;
+	return recovery->pending &&
+		pcm_tx_recovery_waited(now, recovery->poll_sample, round_trip_delay_samples);
 }
 
 static inline void pcm_tx_recovery_note(struct pcm_tx_recovery *recovery,
@@ -68,6 +74,29 @@ static inline bool pcm_tx_recovery_eligible(const struct pcm_tx_recovery *recove
 	return pcm_tx_recovery_timing_valid(recovery, now, observation) &&
 		observation->first_retry && observation->peer_noack &&
 		observation->peer_poll_sample >= recovery->event_sample;
+}
+
+static inline bool pcm_tx_recovery_take_startup_attempt(struct pcm_tx_recovery *recovery,
+	uint64_t now, uint16_t round_trip_delay_samples, const struct modem_tx_recovery *observation)
+{
+	if (!observation->first_startup_retry) {
+		recovery->startup_poll_sample = 0;
+		return false;
+	}
+	if (recovery->startup_attempted || !observation->receive_idle ||
+	    !pcm_tx_recovery_timing_valid(recovery, now, observation))
+		return false;
+	if (!recovery->startup_poll_sample || recovery->event_sample > recovery->startup_poll_sample)
+		recovery->startup_poll_sample = now;
+	/* Idle flags show the inbound carrier, but give weaker evidence of a
+	 * directional stall than a numbered peer poll. Allow the peer another
+	 * second to service the query before considering physical recovery. */
+	if (observation->receive_sample <= recovery->startup_poll_sample ||
+	    !pcm_tx_recovery_waited(now, recovery->startup_poll_sample,
+		    MODEM_RATE + round_trip_delay_samples))
+		return false;
+	recovery->startup_attempted = true;
+	return true;
 }
 
 static inline bool pcm_tx_recovery_second_eligible(const struct pcm_tx_recovery *recovery,

@@ -78,6 +78,8 @@ static int process_v90_g711(
 	int count, bool *exact_output);
 static int retrain_v90(struct dp *dp);
 static void service_link_v90(struct dp *dp);
+static const struct v92_upstream_data_rx *pcm_upstream_receiver(
+	const struct v90_datapump *datapump);
 static int hangup_v90(struct dp *dp);
 static const char *progress_v90(const struct dp *dp);
 static struct dp_link_rates link_rates_v90(const struct dp *dp);
@@ -809,6 +811,16 @@ static void service_link_v90(struct dp *dp)
 			return;
 		if (pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation)) {
 			pcm_tx_recovery_arm(recovery, dp->modem->count);
+		} else if (pcm_upstream_receiver(datapump) &&
+			   pcm_tx_recovery_take_startup_attempt(recovery, dp->modem->count,
+				   datapump->call.round_trip_delay_samples, &observation)) {
+			/* Incoming idle flags can stay sound after a downstream frame
+			 * slip. Grant the first I frame one short exchange when neither
+			 * its acknowledgment nor a status Final reaches LAPM. */
+			if (start_transmit_rate_recovery(datapump)) {
+				recovery->used = true;
+				modem_ec_probe_after_tx_recovery(dp->modem, 0);
+			}
 		} else if (pcm_tx_recovery_second_eligible(recovery, dp->modem->count, &observation) &&
 			   modem_ec_take_retrain_request(dp->modem)) {
 			/* Claim the already due allowance before deferring it. The host's

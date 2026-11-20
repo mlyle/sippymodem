@@ -1148,6 +1148,7 @@ static bool ack_info(struct lapm_state *l, u8 nr)
 		n++;
 	}
 	if (n > 0) {
+		l->acknowledged_information = true;
 		l->stalled_polls = 0;
 		l->stalled_retrain = false;
 	}
@@ -1835,6 +1836,7 @@ static void reset_lapm_link(struct lapm_state *l)
 	l->peer_noack = false;
 	l->received_information = false;
 	l->sent_information = false;
+	l->acknowledged_information = false;
 	l->passive_establishment_expired = false;
 	l->reject = LAPM_REJECT_NONE;
 	l->vs = 0;
@@ -1992,6 +1994,7 @@ bool modem_ec_get_tx_recovery(const struct modem *m,
 	observation->receive_healthy = health->present && m->count >= health->quarantine &&
 		m->count >= health->latest && m->count - health->latest <=
 			(health->numbered ? MODEM_RATE : MODEM_RATE / 10);
+	observation->receive_idle = observation->receive_healthy && !health->numbered;
 	bool information_retry = l->va != l->vs && l->sent_info != l->info_list &&
 		l->rtx_count == 1 && l->stalled_polls == 1 && !l->retrain_poll;
 	/* New information is held behind this enquiry, so it cannot provide an
@@ -2005,6 +2008,10 @@ bool modem_ec_get_tx_recovery(const struct modem *m,
 	observation->first_retry = !l->busy && !l->peer_busy && !l->stalled_retrain &&
 		m->bit_timer > 0 && m->bit_timer_func == t401_timeout &&
 		(information_retry || enquiry_retry);
+	/* Protect wrapped N(R)=0 and later retries with link history. */
+	observation->first_startup_retry = observation->first_retry && information_retry &&
+		l->received_information && l->sent_information && !l->acknowledged_information &&
+		l->va == 0 && l->vs == 1;
 	return true;
 }
 

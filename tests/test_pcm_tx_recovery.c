@@ -24,6 +24,50 @@ static void test_reply_guard(void)
 	}
 }
 
+static void test_startup_guard(void)
+{
+	const uint64_t poll = 24000;
+	const uint16_t round_trip = 1903;
+	const uint64_t deadline = poll + round_trip + MODEM_RATE + MODEM_RATE / 10;
+	struct pcm_tx_recovery recovery = { .phase = 4, .event_sample = 8000 };
+	struct modem_tx_recovery evidence = {
+		.first_startup_retry = true, .receive_idle = true, .receive_healthy = true,
+		.receive_sample = poll,
+	};
+
+	assert(!pcm_tx_recovery_take_startup_attempt(&recovery, poll, round_trip, &evidence));
+	assert(recovery.startup_poll_sample == poll && !recovery.used);
+	assert(!pcm_tx_recovery_take_startup_attempt(&recovery, deadline, round_trip, &evidence));
+	evidence.receive_sample = deadline - 1;
+	assert(!pcm_tx_recovery_take_startup_attempt(&recovery, deadline - 1, round_trip, &evidence));
+	evidence.receive_idle = false;
+	assert(!pcm_tx_recovery_take_startup_attempt(&recovery, deadline, round_trip, &evidence));
+
+	struct pcm_tx_recovery retimed = recovery;
+	evidence.receive_idle = true;
+	evidence.receive_sample = deadline;
+	pcm_tx_recovery_note(&retimed, deadline - 1, 1);
+	assert(!pcm_tx_recovery_take_startup_attempt(&retimed, deadline, round_trip, &evidence));
+	assert(retimed.startup_poll_sample == deadline);
+
+	struct pcm_tx_recovery final = recovery;
+	evidence.first_startup_retry = false;
+	assert(!pcm_tx_recovery_take_startup_attempt(&final, deadline, round_trip, &evidence));
+	assert(!final.startup_poll_sample && !final.startup_attempted && !final.used);
+
+	evidence.first_startup_retry = true;
+	assert(pcm_tx_recovery_take_startup_attempt(&recovery, deadline, round_trip, &evidence));
+	assert(!pcm_tx_recovery_take_startup_attempt(&recovery, deadline + 80, round_trip, &evidence));
+	assert(!recovery.used);
+
+	/* A refused startup exchange leaves the ordinary second-retry path. */
+	evidence.first_startup_retry = false;
+	evidence.second_information_retry = true;
+	assert(pcm_tx_recovery_second_eligible(&recovery, deadline + 80, &evidence));
+	pcm_tx_recovery_progress(&recovery, 1);
+	assert(!recovery.startup_attempted && !recovery.startup_poll_sample && !recovery.phase);
+}
+
 int main(void)
 {
 	struct pcm_tx_recovery recovery = {0}, other = {0};
@@ -32,6 +76,7 @@ int main(void)
 		.receive_sample = 16000, .peer_poll_sample = 16000,
 	};
 	test_reply_guard();
+	test_startup_guard();
 	for (int shift = -12; shift <= 12; ++shift) {
 		recovery = (struct pcm_tx_recovery){0};
 		pcm_tx_recovery_note(&recovery, 8000, shift);
