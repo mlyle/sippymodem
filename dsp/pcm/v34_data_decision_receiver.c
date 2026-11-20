@@ -108,18 +108,26 @@ v34_data_decision_receiver_observe(
 		{ observation, sizeof(*observation) },
 		{ output, sizeof(*output) },
 	};
-	struct v34_data_decision_output generated = { 0 };
-	struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	struct qam_point targets[V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	struct v34_analytic_sample fixed_targets[
-		V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	enum v34_data_receive_result result;
-
 	if (observation == NULL || output == NULL ||
 	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	if (!v34_data_decision_receiver_is_valid(receiver))
 		return V34_DATA_RECEIVE_INVALID_STATE;
+	return v34_data_decision_receiver_observe_owned(receiver, observation, output);
+}
+
+enum v34_data_receive_result
+v34_data_decision_receiver_observe_owned(
+	struct v34_data_decision_receiver *receiver,
+	const struct v34_adaptive_equalizer_observation *observation,
+	struct v34_data_decision_output *output)
+{
+	struct v34_data_decision_output generated = { 0 };
+	struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+	struct qam_point targets[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+	struct v34_analytic_sample fixed_targets[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+	enum v34_data_receive_result result;
+
 	if (!v34_adaptive_equalizer_observation_is_valid(observation))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	if (!receiver->has_first_symbol) {

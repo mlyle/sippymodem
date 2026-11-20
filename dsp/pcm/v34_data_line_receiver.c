@@ -353,7 +353,7 @@ enum v34_data_receive_result v34_data_line_receiver_sample(
 	/* Even a latched marker leaves this call owning one input sample.
 	 * Preserve the physical clock before handing that state to control. */
 	line = receiver->line;
-	line_result = v34_line_receiver_sample(
+	line_result = v34_line_receiver_sample_owned(
 		&line, sample, &observation);
 	if (line_result == V34_LINE_RECEIVER_OK) {
 		receiver->line = line;
@@ -391,7 +391,7 @@ enum v34_data_receive_result v34_data_line_receiver_sample(
 	candidate_after = next.rate_renegotiation.enabled &&
 		next.rate_renegotiation.s.candidate;
 	had_first = next.decisions.has_first_symbol;
-	result = v34_data_decision_receiver_observe(
+	result = v34_data_decision_receiver_observe_owned(
 		&next.decisions, &observation, &decoded);
 	if (result == V34_DATA_RECEIVE_INVALID_ARGUMENT ||
 	    result == V34_DATA_RECEIVE_INVALID_STATE)

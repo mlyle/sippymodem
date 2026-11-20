@@ -120,7 +120,7 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_sample(
 	if (v90_phase4_e_line_rx_is_complete(rx))
 		return V90_PHASE4_E_LINE_RX_COMPLETE;
 	next = *rx;
-	line_result = v34_line_receiver_sample(
+	line_result = v34_line_receiver_sample_owned(
 		&next.line, sample, &observation);
 	if (line_result == V34_LINE_RECEIVER_OK) {
 		if (!v90_phase4_e_line_rx_is_valid(&next))

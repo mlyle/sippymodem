@@ -262,7 +262,7 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_sample(
 		return V90_UPSTREAM_TRAINING_RX_FAILED;
 	next = *receiver;
 	was_tracking = next.stage == V90_UPSTREAM_TRAINING_RX_TRACKING;
-	line_result = v34_line_receiver_sample(
+	line_result = v34_line_receiver_sample_owned(
 		&next.line, sample, &observation);
 	/* The lower S-carrier edge has a qualified raw analytic window. Bring
 	 * an insufficient Phase 2 gain seed into that measured receive domain
@@ -326,7 +326,7 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_advance(
 	if (receiver->stage != V90_UPSTREAM_TRAINING_RX_TRACKING)
 		return V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT;
 	next = *receiver;
-	line_result = v34_line_receiver_sample(
+	line_result = v34_line_receiver_sample_owned(
 		&next.line, sample, &observation);
 	if (line_result == V34_LINE_RECEIVER_OBSERVATION_READY)
 		line_result = v34_line_receiver_resolve(

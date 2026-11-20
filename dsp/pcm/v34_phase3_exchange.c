@@ -412,7 +412,7 @@ static enum v34_phase3_exchange_result discard_caller_wait_sample(
 	    v34_receive_timing_freeze_gain(&line->timing) !=
 		    V34_RECEIVE_TIMING_OK)
 		return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
-	result = v34_line_receiver_sample(line, sample, &observation);
+	result = v34_line_receiver_sample_owned(line, sample, &observation);
 	if (result == V34_LINE_RECEIVER_OBSERVATION_READY)
 		return v34_adaptive_equalizer_discard(
 			       &line->equalizer, &observation) ==

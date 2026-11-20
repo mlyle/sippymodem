@@ -54,6 +54,12 @@ enum v34_line_receiver_result v34_line_receiver_sample(
 	struct v34_line_receiver *receiver, int16_t sample,
 	struct v34_adaptive_equalizer_observation *observation);
 
+/* For a validated line and a nonnull, disjoint observation. An unresolved
+ * decision still prevents advancing the line. */
+enum v34_line_receiver_result v34_line_receiver_sample_owned(
+	struct v34_line_receiver *receiver, int16_t sample,
+	struct v34_adaptive_equalizer_observation *observation);
+
 /* Resolve the one pending observation using a semantic receiver's action.
  * BEGIN_TRACKING also freezes the trained gain. RESTART_PATH preserves the
  * selected profile, current gain, equalizer geometry, and feedback policy while

@@ -191,7 +191,7 @@ static bool receive_sample(struct v34_cleardown *cleardown, int16_t sample)
 	struct v34_fixed_training_decision hard;
 	struct v34_receive_action action =
 		v34_receive_action_only(V34_RECEIVE_DISCARD);
-	enum v34_line_receiver_result result = v34_line_receiver_sample(
+	enum v34_line_receiver_result result = v34_line_receiver_sample_owned(
 		&cleardown->receive_line, sample, &observation);
 
 	if (result == V34_LINE_RECEIVER_OK)

@@ -506,7 +506,7 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample_owned(
 	if (rx->record_pending)
 		return V90_PHASE4_CP_LINE_RX_INVALID_STATE;
 
-	line_result = v34_line_receiver_sample(
+	line_result = v34_line_receiver_sample_owned(
 		&rx->line, sample, &observation);
 	if (line_result == V34_LINE_RECEIVER_OK) {
 		if (!v90_phase4_cp_line_rx_is_valid(rx))

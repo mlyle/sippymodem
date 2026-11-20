@@ -512,7 +512,7 @@ static enum v34_phase34_receiver_result receive_data(
 				V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	}
 	enum v34_data_receive_result result =
-		v34_data_decision_receiver_observe(
+		v34_data_decision_receiver_observe_owned(
 			&data, observation, &decoded);
 	enum v34_phase34_receiver_result mapped = data_result(result);
 
@@ -591,7 +591,7 @@ static enum v34_phase34_receiver_result receive_line_sample(
 	if (hold && v34_receive_timing_set_feedback_held(
 		    &receiver->line.timing, true) != V34_RECEIVE_TIMING_OK)
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
-	line_result = v34_line_receiver_sample(
+	line_result = v34_line_receiver_sample_owned(
 		&receiver->line, sample, &observation);
 	if (hold && v34_receive_timing_set_feedback_held(
 		    &receiver->line.timing, false) != V34_RECEIVE_TIMING_OK)

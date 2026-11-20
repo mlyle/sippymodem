@@ -67,4 +67,12 @@ v34_data_decision_receiver_observe(
 	const struct v34_adaptive_equalizer_observation *observation,
 	struct v34_data_decision_output *output);
 
+/* Same observation contract for a validated semantic child with distinct
+ * nonnull storage. The owner validates its child before advancing line DSP. */
+enum v34_data_receive_result
+v34_data_decision_receiver_observe_owned(
+	struct v34_data_decision_receiver *receiver,
+	const struct v34_adaptive_equalizer_observation *observation,
+	struct v34_data_decision_output *output);
+
 #endif /* V34_DATA_DECISION_RECEIVER_H */

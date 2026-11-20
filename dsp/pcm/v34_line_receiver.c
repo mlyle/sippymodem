@@ -66,18 +66,27 @@ enum v34_line_receiver_result v34_line_receiver_sample(
 	struct v34_line_receiver *receiver, int16_t sample,
 	struct v34_adaptive_equalizer_observation *observation)
 {
-	struct v34_receive_timing_samples recovered = { 0 };
-	struct v34_adaptive_equalizer_observation generated;
-	enum v34_receive_timing_result timing_result;
-	bool was_acquired;
-
 	if (observation == NULL ||
 	    memory_regions_overlap(
 		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
 		    observation, sizeof(*observation)))
 		return V34_LINE_RECEIVER_INVALID_ARGUMENT;
-	if (!v34_line_receiver_is_valid(receiver) ||
-	    receiver->equalizer.decision_pending)
+	if (!v34_line_receiver_is_valid(receiver))
+		return V34_LINE_RECEIVER_INVALID_STATE;
+	return v34_line_receiver_sample_owned(receiver, sample, observation);
+}
+
+enum v34_line_receiver_result v34_line_receiver_sample_owned(
+	struct v34_line_receiver *receiver, int16_t sample,
+	struct v34_adaptive_equalizer_observation *observation)
+{
+	struct v34_receive_timing_samples recovered = { 0 };
+	struct v34_adaptive_equalizer_observation generated;
+	enum v34_receive_timing_result timing_result;
+	bool was_acquired;
+
+	/* A valid line can still have a semantic decision outstanding. */
+	if (receiver->equalizer.decision_pending)
 		return V34_LINE_RECEIVER_INVALID_STATE;
 	was_acquired = v34_receive_timing_is_acquired_owned(&receiver->timing);
 	timing_result = v34_receive_timing_sample_owned(
@@ -122,6 +131,43 @@ enum v34_line_receiver_result v34_line_receiver_sample(
 	return V34_LINE_RECEIVER_OBSERVATION_READY;
 }
 
+static enum v34_line_receiver_result change_receive_epoch(
+	struct v34_line_receiver *receiver,
+	const struct v34_adaptive_equalizer_observation *observation,
+	enum v34_receive_action_kind action)
+{
+	struct v34_line_receiver next = *receiver;
+
+	if (v34_adaptive_equalizer_discard(&next.equalizer, observation) !=
+	    V34_ADAPTIVE_EQUALIZER_OK)
+		return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+	if (action == V34_RECEIVE_BEGIN_TRACKING) {
+		if (v34_receive_timing_freeze_gain(&next.timing) !=
+			    V34_RECEIVE_TIMING_OK ||
+		    v34_adaptive_equalizer_begin_tracking(&next.equalizer) !=
+			    V34_ADAPTIVE_EQUALIZER_OK)
+			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+	} else {
+		struct v34_line_receiver restarted;
+		const struct v34_equalizer *geometry = &next.equalizer.equalizer;
+
+		if (v34_line_receiver_init(
+			    &restarted, &next.timing.transmitting_profile,
+			    next.timing.gain.gain, false, next.equalizer.feedback_mode) !=
+			    V34_LINE_RECEIVER_OK ||
+		    v34_equalizer_init_geometry(
+			    &restarted.equalizer.equalizer, geometry->tap_count,
+			    (geometry->tap_count - geometry->identity_tap) / 2u) !=
+			    V34_EQUALIZER_OK)
+			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+		next = restarted;
+	}
+	if (!v34_line_receiver_is_valid(&next))
+		return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+	*receiver = next;
+	return V34_LINE_RECEIVER_OK;
+}
+
 enum v34_line_receiver_result v34_line_receiver_resolve(
 	struct v34_line_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
@@ -133,70 +179,38 @@ enum v34_line_receiver_result v34_line_receiver_resolve(
 		{ observation, observation == NULL ? 0 : sizeof(*observation) },
 		{ action, action == NULL ? 0 : sizeof(*action) },
 	};
-	struct v34_line_receiver next;
-	enum v34_adaptive_equalizer_feedback_mode feedback_mode;
+	enum v34_adaptive_equalizer_result result;
 
 	if (observation == NULL || action == NULL ||
 	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions) ||
-	    !v34_receive_action_is_valid(
-		    action, observation, decoder_power_q15))
+	    !v34_receive_action_is_valid(action, observation, decoder_power_q15))
 		return V34_LINE_RECEIVER_INVALID_ARGUMENT;
 	if (!v34_line_receiver_is_valid(receiver) ||
 	    !receiver->equalizer.decision_pending)
 		return V34_LINE_RECEIVER_INVALID_STATE;
-	next = *receiver;
+
+	/* A line with a pending decision has acquired timing. Only epoch
+	 * changes can modify both timing and equalizer and need a line snapshot.
+	 * Ordinary resolution rejects before changing the equalizer. */
 	switch (action->action) {
 	case V34_RECEIVE_COMMIT:
-		if (v34_adaptive_equalizer_commit(
-			    &next.equalizer, &action->equalizer) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
-			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+		result = v34_adaptive_equalizer_commit(
+			&receiver->equalizer, &action->equalizer);
 		break;
 	case V34_RECEIVE_DISCARD:
-		if (v34_adaptive_equalizer_discard(
-			    &next.equalizer, observation) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
-			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+		result = v34_adaptive_equalizer_discard(
+			&receiver->equalizer, observation);
 		break;
 	case V34_RECEIVE_COAST:
-		if (v34_adaptive_equalizer_coast(
-			    &next.equalizer, observation) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
-			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+		result = v34_adaptive_equalizer_coast(
+			&receiver->equalizer, observation);
 		break;
 	case V34_RECEIVE_BEGIN_TRACKING:
-		if (v34_adaptive_equalizer_discard(
-			    &next.equalizer, observation) !=
-			    V34_ADAPTIVE_EQUALIZER_OK ||
-		    v34_receive_timing_freeze_gain(&next.timing) !=
-			    V34_RECEIVE_TIMING_OK ||
-		    v34_adaptive_equalizer_begin_tracking(&next.equalizer) !=
-			    V34_ADAPTIVE_EQUALIZER_OK)
-			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
-		break;
-	case V34_RECEIVE_RESTART_PATH: {
-		struct v34_line_receiver restarted;
-		const struct v34_equalizer *geometry = &next.equalizer.equalizer;
-
-		feedback_mode = next.equalizer.feedback_mode;
-		if (v34_adaptive_equalizer_discard(
-			    &next.equalizer, observation) !=
-			    V34_ADAPTIVE_EQUALIZER_OK ||
-		    v34_line_receiver_init(
-			    &restarted, &next.timing.transmitting_profile,
-			    next.timing.gain.gain, false, feedback_mode) !=
-			    V34_LINE_RECEIVER_OK ||
-		    v34_equalizer_init_geometry(
-			    &restarted.equalizer.equalizer, geometry->tap_count,
-			    (geometry->tap_count - geometry->identity_tap) / 2u) !=
-			    V34_EQUALIZER_OK)
-			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
-		next = restarted;
-		break;
+	case V34_RECEIVE_RESTART_PATH:
+		return change_receive_epoch(receiver, observation, action->action);
+	default:
+		return V34_LINE_RECEIVER_INVALID_ARGUMENT;
 	}
-	}
-	if (!v34_line_receiver_is_valid(&next))
-		return V34_LINE_RECEIVER_NUMERIC_FAILURE;
-	*receiver = next;
-	return V34_LINE_RECEIVER_OK;
+	return result == V34_ADAPTIVE_EQUALIZER_OK ?
+		V34_LINE_RECEIVER_OK : V34_LINE_RECEIVER_NUMERIC_FAILURE;
 }
