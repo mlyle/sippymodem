@@ -74,33 +74,36 @@ static inline void v92_frame_bounds_control(const uint64_t *costs,
 /* Owned geometry: counts are 1..128, moduli are nonzero, maximum_last is below
  * the last modulus, and each cost row covers twice its count. group_tail is
  * the ordinary within-group parity bound from the same costs/geometry.
+ * point_minimum holds each unrestricted row's even and odd minima.
  * All arguments are disjoint. No input pointer survives preparation. */
 static inline void v92_frame_bounds_prepare(struct v92_frame_bounds *bounds,
 	const uint64_t costs[V92_PCM_MAPPING_FRAME_SYMBOLS][2 * V92_CPD_MAX_CONSTELLATION_POINTS],
 	const uint64_t group_tail[V92_PCM_MAPPING_FRAME_SYMBOLS][2],
+	const uint64_t point_minimum[V92_PCM_MAPPING_FRAME_SYMBOLS][2],
 	const uint8_t counts[V92_PCM_MAPPING_FRAME_SYMBOLS],
 	const uint8_t moduli[V92_PCM_MAPPING_FRAME_SYMBOLS], uint8_t maximum_last)
 {
-	/* Only the last group changes under the payload-digit constraint.
-	 * Share its ordinary point minima between the two old-sign modes. */
-	for (unsigned symbol = V92_PCM_MAPPING_FRAME_SYMBOLS; symbol-- > 8u;) {
-		uint64_t minimum[2][2] = { { UINT64_MAX, UINT64_MAX }, { UINT64_MAX, UINT64_MAX } };
-		int first = -(int)counts[symbol];
-		int coordinate = (first - (int)((unsigned)first & 1u)) / 2;
-		unsigned digit = nonnegative_remainder_s32(coordinate, moduli[symbol]);
-		for (int eta = first; eta < counts[symbol]; ++eta) {
-			unsigned parity = (unsigned)eta & 1u;
-			uint64_t cost = costs[symbol][eta + counts[symbol]];
-			if ((symbol != 11u || digit <= maximum_last) && cost < minimum[0][parity])
-				minimum[0][parity] = cost;
-			if ((symbol != 11u || moduli[symbol] - 1u - digit <= maximum_last) && cost < minimum[1][parity])
-				minimum[1][parity] = cost;
-			if (parity && ++digit == moduli[symbol]) digit = 0;
-		}
-		for (unsigned sign = 0; sign < 2; ++sign)
-			v92_frame_bounds_store(bounds, sign, symbol, minimum[sign]);
+	/* Only the most significant digit restricts these payload bounds.
+	 * Other symbols in its group reuse the point minima already computed
+	 * for ordinary group parity. */
+	const unsigned last = V92_PCM_MAPPING_FRAME_SYMBOLS - 1u;
+	uint64_t minimum[2][2] = { { UINT64_MAX, UINT64_MAX }, { UINT64_MAX, UINT64_MAX } };
+	int first = -(int)counts[last];
+	int coordinate = (first - (int)((unsigned)first & 1u)) / 2;
+	unsigned digit = nonnegative_remainder_s32(coordinate, moduli[last]);
+	for (int eta = first; eta < counts[last]; ++eta) {
+		unsigned parity = (unsigned)eta & 1u;
+		uint64_t cost = costs[last][eta + counts[last]];
+		if (digit <= maximum_last && cost < minimum[0][parity])
+			minimum[0][parity] = cost;
+		if (moduli[last] - 1u - digit <= maximum_last && cost < minimum[1][parity])
+			minimum[1][parity] = cost;
+		if (parity && ++digit == moduli[last]) digit = 0;
 	}
-	for (unsigned sign = 0; sign < 2; ++sign)
+	for (unsigned sign = 0; sign < 2; ++sign) {
+		v92_frame_bounds_store(bounds, sign, last, minimum[sign]);
+		for (unsigned symbol = last; symbol-- > last - 3u;)
+			v92_frame_bounds_store(bounds, sign, symbol, point_minimum[symbol]);
 		for (unsigned group = 2; group-- > 0;) {
 			const uint64_t *next = bounds->tail[sign][4u * (group + 1u)];
 			uint64_t later = next[0] < next[1] ? next[0] : next[1];
@@ -109,6 +112,7 @@ static inline void v92_frame_bounds_prepare(struct v92_frame_bounds *bounds,
 					bounds->tail[sign][4u * group + i][parity] =
 						add_u64_saturating(group_tail[4u * group + i][parity], later);
 		}
+	}
 	for (unsigned symbol = V92_PCM_MAPPING_FRAME_SYMBOLS; symbol-- > 0;)
 		for (unsigned request = 0; request < 2; ++request) {
 			uint64_t minimum[2];

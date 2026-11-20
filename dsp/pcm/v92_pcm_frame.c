@@ -1018,6 +1018,7 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
 
 struct frame_path {
 	uint8_t origin;
+	uint8_t requests; /* RM and qualified RM-prime still matching this prefix. */
 	struct v92_pcm_frame_rx_path state;
 	struct v92_pcm_frame frame;
 	uint64_t frame_metric;
@@ -1062,6 +1063,7 @@ static void copy_frame_path(struct frame_path *destination,
 	const struct frame_path *source, size_t history_bytes)
 {
 	destination->origin = source->origin;
+	destination->requests = source->requests;
 	copy_path_state(&destination->state, &source->state, history_bytes);
 	memcpy(&destination->frame, &source->frame,
 	       sizeof(*destination) - offsetof(struct frame_path, frame));
@@ -1116,6 +1118,7 @@ struct frame_candidate {
 	uint8_t path;
 	uint8_t digit;
 	uint8_t y0;
+	uint8_t requests;
 };
 
 /* Max-heap of the best bounded candidates. Equal metrics do not replace
@@ -1630,6 +1633,7 @@ static enum v92_pcm_frame_result decode_frame(
 		}
 	unsigned minimum_point[V92_PCM_MAPPING_FRAME_SYMBOLS] = { 0 };
 	uint64_t tail[V92_PCM_MAPPING_FRAME_SYMBOLS][2] = { { 0 } };
+	uint64_t point_minimum[V92_PCM_MAPPING_FRAME_SYMBOLS][2];
 	uint64_t point_cost[V92_PCM_MAPPING_FRAME_SYMBOLS]
 		[2 * V92_CPD_MAX_CONSTELLATION_POINTS];
 	/* Reuse the exact lookahead costs when the beam visits the same points. */
@@ -1637,7 +1641,8 @@ static enum v92_pcm_frame_result decode_frame(
 		for (unsigned symbol = V92_PCM_MAPPING_FRAME_SYMBOLS; symbol-- > 0;) {
 			unsigned set = receiver->mapping.cpd.frame_constellation[symbol % V92_PCM_MAPPING_PHASES];
 			const struct v92_cpd_constellation *constellation = &receiver->mapping.cpd.constellation[set];
-			uint64_t minimum[2] = { UINT64_MAX, UINT64_MAX };
+			uint64_t *minimum = point_minimum[symbol];
+			minimum[0] = minimum[1] = UINT64_MAX;
 			/* Cells already describe companding uncertainty. After the B1u
 			 * tail drains, score the remaining input distance uniformly. */
 			uint64_t weight = cells && receiver->post_b1_frames == V92_PCM_RX_DELAY_FRAMES ?
@@ -1678,6 +1683,7 @@ static enum v92_pcm_frame_result decode_frame(
 	for (size_t index = 0u; index < path_count; ++index) {
 		paths[index].origin = (uint8_t)index;
 		copy_path_state(&paths[index].state, &receiver->paths[index], history_bytes);
+		paths[index].requests = paths[index].state.rm_frames == V92_PCM_RM_QUALIFY_FRAMES ? 3u : 1u;
 		memset(&paths[index].frame, 0,
 		       sizeof(paths[index]) - offsetof(struct frame_path, frame));
 		if (known && !b1u_digits(receiver, &receiver->paths[index], known_digits[index]))
@@ -1707,7 +1713,7 @@ static enum v92_pcm_frame_result decode_frame(
 		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
 			counts[i] = receiver->mapping.cpd.constellation[
 				receiver->mapping.cpd.frame_constellation[i % V92_PCM_MAPPING_PHASES]].count;
-		v92_frame_bounds_prepare(&frame_bounds, point_cost, tail, counts,
+		v92_frame_bounds_prepare(&frame_bounds, point_cost, tail, point_minimum, counts,
 			receiver->mapping.cpd.modulus, maximum_digits[V92_PCM_MAPPING_FRAME_SYMBOLS - 1u]);
 	}
 	bool initial = !known && b1u && receiver->noise.frames == 0u &&
@@ -1881,7 +1887,9 @@ static enum v92_pcm_frame_result decode_frame(
 					parity ^= (unsigned)paths[path].frame.signed_index[previous] & 1u;
 			int data_limit = (int)modulus - 1;
 			unsigned requests = 0u;
-			if (constrain_words && (bound_words || symbol + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS)) {
+			if (bound_words) {
+				requests = paths[path].requests;
+			} else if (constrain_words && symbol + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS) {
 				requests = rm_prefix(&receiver->mapping, paths[path].frame.digit, symbol);
 				if (paths[path].state.rm_frames != V92_PCM_RM_QUALIFY_FRAMES)
 					requests &= ~2u;
@@ -2068,6 +2076,7 @@ static enum v92_pcm_frame_result decode_frame(
 					unsigned next_requests = requests &
 						((digit == request_digit[0] ? 1u : 0u) |
 						 (digit == request_digit[1] ? 2u : 0u));
+					candidate.requests = next_requests;
 					uint64_t bound = completion[paths[path].state.differential][next_requests][p];
 					candidate.metric = add_u64_saturating(candidate.metric, bound);
 				} else if (lookahead && symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS != 3u)
@@ -2091,6 +2100,7 @@ static enum v92_pcm_frame_result decode_frame(
 			copy_frame_path(
 				&next[index], &paths[candidate->path], history_bytes);
 			next[index].state.metric = candidate->path_metric;
+			next[index].requests = candidate->requests;
 			frame->signed_index[symbol] = candidate->eta;
 			frame->digit[symbol] = candidate->digit;
 			frame->u[symbol] = v92_cpd_signed_point(constellation, candidate->eta);

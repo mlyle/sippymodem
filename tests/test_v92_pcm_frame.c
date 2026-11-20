@@ -2275,9 +2275,10 @@ static bool test_frame_bounds(void)
 					UINT64_MAX / 3u + random % 1000u : random % 10000u;
 			}
 		}
-		uint64_t group_tail[12][2];
+		uint64_t group_tail[12][2], point_minimum[12][2];
 		for (unsigned symbol = 12; symbol-- > 0;) {
-			uint64_t minimum[2] = { UINT64_MAX, UINT64_MAX };
+			uint64_t *minimum = point_minimum[symbol];
+			minimum[0] = minimum[1] = UINT64_MAX;
 			for (int eta = -(int)o.counts[symbol]; eta < o.counts[symbol]; ++eta) {
 				unsigned p = (unsigned)eta & 1u;
 				if (o.costs[symbol][eta + o.counts[symbol]] < minimum[p])
@@ -2292,7 +2293,7 @@ static bool test_frame_bounds(void)
 				}
 			}
 		}
-		v92_frame_bounds_prepare(&bounds, o.costs, group_tail, o.counts, o.moduli, o.maximum);
+		v92_frame_bounds_prepare(&bounds, o.costs, group_tail, point_minimum, o.counts, o.moduli, o.maximum);
 		for (o.selection = V34_TRELLIS_16_STATE; o.selection <= V34_TRELLIS_64_STATE; ++o.selection)
 			for (unsigned state = 0; state < v34_trellis_state_count(o.selection); ++state)
 				for (o.group = 0; o.group < 3; ++o.group) {
