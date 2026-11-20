@@ -220,7 +220,7 @@ static bool check_search(
 	CHECK(acquisitions == 1u &&
 	      search.stage == V90_PHASE4_RI_SEARCH_AMBIGUOUS &&
 	      v90_phase4_ri_search_is_acquired(&search),
-	      "Ri search did not retain both polarity hypotheses");
+	      "Ri search did not retain the ambiguous phase");
 	for (uint8_t phase = start_phase;
 	     phase != 0u; phase = (uint8_t)((phase + 1u) %
 					     V90_PHASE4_RI_PERIOD)) {
@@ -260,9 +260,7 @@ static bool check_search(
 	}
 	CHECK(transitions == 1u &&
 	      v90_phase4_ri_search_is_complete(&search) &&
-	      search.selected_hypothesis < 2u &&
-	      search.hypotheses[search.selected_hypothesis].inverted ==
-		      inverted,
+	      search.rx.inverted == inverted,
 	      "Ri search resolved the wrong polarity hypothesis");
 	{
 		struct v90_phase4_ri_search saved = search;
@@ -442,7 +440,7 @@ static bool check_sampled_ri(
 	}
 	CHECK(acquisitions == 1u && transitions == 1u && completions == 1u &&
 	      v90_phase4_ri_search_is_complete(&search) &&
-	      search.hypotheses[search.selected_hypothesis].inverted == inverted,
+	      search.rx.inverted == inverted,
 	      "sampled Ri search lost its sequence or polarity");
 	return true;
 }

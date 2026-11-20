@@ -33,17 +33,14 @@ enum v90_phase4_ri_search_result {
  * window makes an accidental match in scrambled Phase 3 data negligible;
  * each sample must also pass the shared UINFO magnitude qualification.
  * Ri alone cannot distinguish a whole-signal polarity reversal from a
- * three-symbol phase shift, so both equivalent hypotheses are retained until
- * Ri-bar resolves the ambiguity. */
+ * three-symbol phase shift. Track the shared phase in one aligned receiver
+ * until the Ri-bar edge resolves polarity. */
 struct v90_phase4_ri_search {
-	struct v90_phase4_ri_rx hypotheses[2];
+	struct v90_phase4_ri_rx rx;
 	enum v90_phase4_ri_search_stage stage;
-	enum g711_law law;
 	uint8_t history[V90_PHASE4_RI_SEARCH_SYMBOLS];
 	uint8_t history_count;
 	uint8_t history_cursor;
-	uint8_t training_ucode;
-	uint8_t selected_hypothesis;
 };
 
 enum v90_phase4_ri_search_result v90_phase4_ri_search_init(
@@ -61,6 +58,10 @@ bool v90_phase4_ri_search_is_complete(
  * returns the receiver to the sliding hunt so later Ri repetitions can
  * reacquire without latching the call failed. */
 enum v90_phase4_ri_search_result v90_phase4_ri_search_receive(
+	struct v90_phase4_ri_search *search, uint8_t network_octet);
+
+/* Update an already validated, staged search within the caller's transaction. */
+enum v90_phase4_ri_search_result v90_phase4_ri_search_receive_owned(
 	struct v90_phase4_ri_search *search, uint8_t network_octet);
 
 const char *v90_phase4_ri_search_result_name(

@@ -44,7 +44,7 @@ static bool receive_is_valid(
 		       station->receive.j.stage != PCM_PHASE3_J_RECEIVER_DONE;
 	case V92_PHASE3_ANALOG_RECEIVE_RI:
 		return v90_phase4_ri_search_is_valid(&station->receive.ri) &&
-		       !v90_phase4_ri_search_is_complete(&station->receive.ri);
+		       station->receive.ri.stage != V90_PHASE4_RI_SEARCH_COMPLETE;
 	case V92_PHASE3_ANALOG_RECEIVE_COMPLETE:
 		return v90_phase4_ri_search_is_complete(&station->receive.ri);
 	}
@@ -620,7 +620,7 @@ static enum v92_phase3_analog_station_result receive_ri(
 	      station->transmit.cpt.completed_records == 0u)))
 		return V92_PHASE3_ANALOG_STATION_OK;
 	enum v90_phase4_ri_search_result result =
-		v90_phase4_ri_search_receive(
+		v90_phase4_ri_search_receive_owned(
 			&station->receive.ri, network_octet);
 
 	/* The acknowledgement ending CPt is Ri-bar for N=0, plain Ri for DIL. */

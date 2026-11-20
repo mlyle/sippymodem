@@ -258,7 +258,7 @@ static enum v90_phase4_startup_result transmit_character(
 			v90_phase4_analog_station_transmit_owned(station, &sample));
 
 	if (result == V90_PHASE4_STARTUP_OK)
-		*octet = g711_encode(station->receive.law, sample);
+		*octet = g711_encode(station->receive.rx.law, sample);
 	return result;
 }
 

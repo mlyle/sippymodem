@@ -78,6 +78,14 @@ bool v90_phase4_ri_rx_is_complete(const struct v90_phase4_ri_rx *rx);
 enum v90_phase4_ri_result v90_phase4_ri_rx_receive(
 	struct v90_phase4_ri_rx *rx, uint8_t network_octet);
 
+/* Parse and qualify one network character before interpreting its sign. */
+bool v90_phase4_ri_observe(enum g711_law law, uint8_t training_ucode,
+	uint8_t network_octet, bool *positive);
+
+/* Advance an active, validated receiver with a qualified sign. */
+enum v90_phase4_ri_result v90_phase4_ri_rx_sign_owned(
+	struct v90_phase4_ri_rx *rx, bool positive);
+
 /* Shared magnitude qualification for aligned reception and sliding search.
  * Anchor the window to UINFO, not to the candidate signal: unrelated tones
  * must not teach the receiver a new Ri level. Invalid laws/codes fail closed. */

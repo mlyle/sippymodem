@@ -30,6 +30,18 @@ bool v90_phase4_ri_level_matches(
 	return error >= -level / 4 && error <= level / 4;
 }
 
+bool v90_phase4_ri_observe(enum g711_law law, uint8_t training_ucode,
+	uint8_t network_octet, bool *positive)
+{
+	struct v90_pcm_symbol symbol;
+
+	if (!v90_pcm_symbol_parse(&symbol, law, network_octet) ||
+	    !v90_phase4_ri_level_matches(law, training_ucode, symbol.sample))
+		return false;
+	*positive = symbol.positive;
+	return true;
+}
+
 static bool common_state_is_valid(
 	enum v90_phase4_ri_stage stage, enum g711_law law,
 	uint16_t ri_symbols, uint8_t ri_bar_symbols,
@@ -221,25 +233,28 @@ static enum v90_phase4_ri_result receive_ri_bar(
 	return V90_PHASE4_RI_DONE;
 }
 
+enum v90_phase4_ri_result v90_phase4_ri_rx_sign_owned(
+	struct v90_phase4_ri_rx *rx, bool positive)
+{
+	return rx->stage == V90_PHASE4_RI ?
+		receive_ri(rx, positive) : receive_ri_bar(rx, positive);
+}
+
 enum v90_phase4_ri_result v90_phase4_ri_rx_receive(
 	struct v90_phase4_ri_rx *rx, uint8_t network_octet)
 {
 	struct v90_phase4_ri_rx next;
-	struct v90_pcm_symbol symbol;
+	bool positive;
 	enum v90_phase4_ri_result result;
 
 	if (!v90_phase4_ri_rx_is_valid(rx))
 		return V90_PHASE4_RI_INVALID_ARGUMENT;
-	if (v90_phase4_ri_rx_is_complete(rx))
+	if (rx->stage == V90_PHASE4_RI_COMPLETE)
 		return V90_PHASE4_RI_DONE;
-	if (!v90_pcm_symbol_parse(&symbol, rx->law, network_octet) ||
-	    !v90_phase4_ri_level_matches(
-		    rx->law, rx->training_ucode, symbol.sample))
+	if (!v90_phase4_ri_observe(rx->law, rx->training_ucode, network_octet, &positive))
 		return V90_PHASE4_RI_INVALID_SEQUENCE;
 	next = *rx;
-	result = next.stage == V90_PHASE4_RI ?
-			 receive_ri(&next, symbol.positive) :
-			 receive_ri_bar(&next, symbol.positive);
+	result = v90_phase4_ri_rx_sign_owned(&next, positive);
 	if (result == V90_PHASE4_RI_INVALID_SEQUENCE)
 		return result;
 	if (!v90_phase4_ri_rx_is_valid(&next))

@@ -34,7 +34,7 @@ bool v90_phase4_analog_station_owned_state_is_valid(
 		    V90_JD_MAXIMUM_LOOKAHEAD ||
 	    !v90_cp_parameters_are_valid(&station->training_parameters) ||
 	    station->training_parameters.kind != V90_CP_TRAINING ||
-	    station->training_parameters.law != station->receive.law ||
+	    station->training_parameters.law != station->receive.rx.law ||
 	    station->training_parameters.spectral_lookahead >
 		    station->maximum_spectral_lookahead)
 		return false;
@@ -53,7 +53,7 @@ bool v90_phase4_analog_station_is_valid(
 	return v90_phase4_analog_station_owned_state_is_valid(station) &&
 	       v90_phase4_cp_line_tx_is_valid(&station->transmit) &&
 	       training_parameters_are_supported(
-		       &station->training_parameters, station->receive.law,
+		       &station->training_parameters, station->receive.rx.law,
 		       station->maximum_spectral_lookahead);
 }
 
@@ -244,7 +244,7 @@ enum v90_phase4_analog_station_result v90_phase4_analog_station_receive_owned(
 		*station = next;
 		return V90_PHASE4_ANALOG_STATION_OK;
 	}
-	receive_result = v90_phase4_ri_search_receive(
+	receive_result = v90_phase4_ri_search_receive_owned(
 		&next.receive, network_octet);
 	if (receive_result == V90_PHASE4_RI_SEARCH_INVALID_SEQUENCE) {
 		station->failed = true;
