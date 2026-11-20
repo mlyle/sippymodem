@@ -93,7 +93,7 @@ static enum v90_modem_role child_role(const struct pcm_phase2 *phase2)
 	case PCM_PHASE2_INITIAL_PROBE:
 	case PCM_PHASE2_PROBE_TURNAROUND:
 	case PCM_PHASE2_RECIPROCAL_PROBE:
-		return phase2->state.probe.initial.ranging.info0_exchange.local_role;
+		return phase2->state.probe.ranging.info0_exchange.local_role;
 	case PCM_PHASE2_INFO1:
 		return phase2->state.info1.control.signal_role ==
 			       PHASE2_SIGNAL_A ?
@@ -110,7 +110,7 @@ static enum pcm_protocol child_protocol(const struct pcm_phase2 *phase2)
 	case PCM_PHASE2_INITIAL_PROBE:
 	case PCM_PHASE2_PROBE_TURNAROUND:
 	case PCM_PHASE2_RECIPROCAL_PROBE:
-		return phase2->state.probe.initial.ranging.info0_exchange.protocol;
+		return phase2->state.probe.ranging.info0_exchange.protocol;
 	case PCM_PHASE2_INFO1:
 		return phase2->state.info1.protocol;
 	}
@@ -139,7 +139,7 @@ static enum pcm_phase2_failure active_failure(
 		return PCM_PHASE2_FAILURE_NONE;
 	case PCM_PHASE2_INITIAL_PROBE:
 		return probe_failure(
-			phase2->state.probe.initial.control.failure);
+			phase2->state.probe.initial.failure);
 	case PCM_PHASE2_PROBE_TURNAROUND:
 		return phase2->state.probe.turnaround.failure ==
 			       PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT ?
@@ -193,17 +193,21 @@ bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2)
 		child_valid = pcm_phase2_ranging_is_valid(
 			&phase2->state.ranging);
 		break;
-	case PCM_PHASE2_INITIAL_PROBE:
-		child_valid = v90_phase2_initial_probe_is_valid(
-			&phase2->state.probe.initial);
+	case PCM_PHASE2_INITIAL_PROBE: {
+		const struct pcm_phase2_probe *probe = &phase2->state.probe;
+
+		child_valid = pcm_phase2_probe_ranging_complete(probe) &&
+			      phase2_initial_probe_is_valid(
+				      &probe->initial, &probe->ranging.info0_exchange.transport);
 		break;
+	}
 	case PCM_PHASE2_PROBE_TURNAROUND: {
 		const struct pcm_phase2_probe *probe = &phase2->state.probe;
 
 		child_valid = pcm_phase2_probe_ranging_complete(probe) &&
 			      phase2_probe_turnaround_is_valid(
-				      &probe->turnaround, &probe->initial.control,
-				      &probe->initial.ranging.info0_exchange.transport);
+				      &probe->turnaround, &probe->initial,
+				      &probe->ranging.info0_exchange.transport);
 		break;
 	}
 	case PCM_PHASE2_RECIPROCAL_PROBE: {
@@ -211,8 +215,8 @@ bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2)
 
 		child_valid = pcm_phase2_probe_ranging_complete(probe) &&
 			      phase2_reciprocal_probe_is_valid(
-				      &probe->reciprocal, &probe->turnaround, &probe->initial.control,
-				      &probe->initial.ranging.info0_exchange.transport);
+				      &probe->reciprocal, &probe->turnaround, &probe->initial,
+				      &probe->ranging.info0_exchange.transport);
 		break;
 	}
 	case PCM_PHASE2_INFO1:
@@ -777,15 +781,19 @@ static bool select_startup(struct pcm_phase2 *phase2)
 static bool enter_initial_probe(
 	struct pcm_phase2 *phase2, struct pcm_phase2_event *event)
 {
-	const struct pcm_phase2_ranging *ranging = &phase2->state.ranging;
+	struct pcm_phase2_ranging ranging = phase2->state.ranging;
+	struct phase2_initial_probe initial;
 
-	if (!pcm_phase2_info0_exchange_complete(&ranging->info0_exchange) ||
-	    v90_phase2_initial_probe_init(
-		    &phase2->state.probe.initial, ranging) !=
+	if (!pcm_phase2_info0_exchange_complete(&ranging.info0_exchange) ||
+	    !pcm_phase2_ranging_is_valid(&ranging) ||
+	    phase2_initial_probe_init(
+		    &initial, &ranging.info0_exchange.transport, &ranging.control) !=
 		    PHASE2_INITIAL_PROBE_OK)
 		return false;
-	phase2->peer_info0 =
-		phase2->state.probe.initial.ranging.info0_exchange.peer_info0;
+	/* The probe owns the completed ranging before it takes over the union. */
+	phase2->state.probe.ranging = ranging;
+	phase2->state.probe.initial = initial;
+	phase2->peer_info0 = ranging.info0_exchange.peer_info0;
 	phase2->peer_info0_stored = true;
 	phase2->stage = PCM_PHASE2_INITIAL_PROBE;
 	event->kind = PCM_PHASE2_EVENT_INITIAL_PROBE_STARTED;
@@ -798,8 +806,8 @@ static bool enter_turnaround(
 	struct pcm_phase2_probe *probe = &phase2->state.probe;
 
 	if (phase2_probe_turnaround_init(
-		    &probe->turnaround, &probe->initial.control,
-		    &probe->initial.ranging.info0_exchange.transport) !=
+		    &probe->turnaround, &probe->initial,
+		    &probe->ranging.info0_exchange.transport) !=
 	    PHASE2_PROBE_TURNAROUND_OK)
 		return false;
 	phase2->stage = PCM_PHASE2_PROBE_TURNAROUND;
@@ -811,10 +819,10 @@ static bool enter_reciprocal_probe(
 	struct pcm_phase2 *phase2, struct pcm_phase2_event *event)
 {
 	struct pcm_phase2_probe *probe = &phase2->state.probe;
-	struct pcm_phase2_ranging *ranging = &probe->initial.ranging;
+	struct pcm_phase2_ranging *ranging = &probe->ranging;
 
 	if (phase2_reciprocal_probe_init(
-		    &probe->reciprocal, &probe->turnaround, &probe->initial.control,
+		    &probe->reciprocal, &probe->turnaround, &probe->initial,
 		    &ranging->info0_exchange.transport,
 		    ranging->control.round_trip_delay_samples, NULL) !=
 	    PHASE2_RECIPROCAL_PROBE_OK)
@@ -914,9 +922,12 @@ static bool sample_initial_probe(
 	int16_t *transmit_sample, struct pcm_phase2_event *event)
 {
 	struct phase2_initial_probe_event child;
+	struct pcm_phase2_probe *probe = &phase2->state.probe;
+	struct pcm_phase2_info0_exchange *exchange = &probe->ranging.info0_exchange;
 
-	if (v90_phase2_initial_probe_sample(
-		    &phase2->state.probe.initial, received_sample,
+	if (phase2_initial_probe_sample(
+		    &probe->initial, &exchange->transport,
+		    exchange->state != PCM_PHASE2_INFO0_RETRAIN, received_sample,
 		    transmit_sample, &child) != PHASE2_INITIAL_PROBE_OK)
 		return false;
 	switch (child.kind) {
@@ -924,8 +935,8 @@ static bool sample_initial_probe(
 		return true;
 	case PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE:
 		if (phase2->local_role != V90_DIGITAL_MODEM ||
-		    v90_phase2_initial_probe_measure(
-			    &phase2->state.probe.initial, &phase2->remote_probe,
+		    phase2_initial_probe_measure(
+			    &probe->initial, &exchange->transport, &phase2->remote_probe,
 			    &phase2->remote_receive_gain) != PHASE2_INITIAL_PROBE_OK)
 			return false;
 		phase2->remote_probe_stored = true;
@@ -939,7 +950,7 @@ static bool sample_initial_probe(
 	case PHASE2_INITIAL_PROBE_EVENT_FAILED:
 		if (child.failure == PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT) {
 			struct pcm_phase2_ranging next =
-				phase2->state.probe.initial.ranging;
+				phase2->state.probe.ranging;
 
 			if (phase2_ranging_restart_after_probe(
 				    &next.control, &next.info0_exchange.transport) !=
@@ -969,8 +980,8 @@ static bool sample_turnaround(
 			PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY;
 
 	if (phase2_probe_turnaround_sample(
-		    &probe->turnaround, &probe->initial.control,
-		    &probe->initial.ranging.info0_exchange.transport, received_sample,
+		    &probe->turnaround, &probe->initial,
+		    &probe->ranging.info0_exchange.transport, received_sample,
 		    transmit_sample, &child) != PHASE2_PROBE_TURNAROUND_OK)
 		return false;
 	switch (child.kind) {
@@ -997,10 +1008,10 @@ static bool sample_reciprocal_probe(
 	struct phase2_reciprocal_probe_event child;
 	struct pcm_phase2_probe *probe = &phase2->state.probe;
 	struct phase2_info0_exchange *transport =
-		&probe->initial.ranging.info0_exchange.transport;
+		&probe->ranging.info0_exchange.transport;
 
 	if (phase2_reciprocal_probe_sample(
-		    &probe->reciprocal, &probe->turnaround, &probe->initial.control,
+		    &probe->reciprocal, &probe->turnaround, &probe->initial,
 		    transport, received_sample,
 		    transmit_sample, &child) != PHASE2_RECIPROCAL_PROBE_OK)
 		return false;
@@ -1011,7 +1022,7 @@ static bool sample_reciprocal_probe(
 		if (phase2->local_role != V90_ANALOG_MODEM ||
 		    phase2_reciprocal_probe_measure(
 			    &probe->reciprocal, &probe->turnaround,
-			    &probe->initial.control, transport, &phase2->remote_probe,
+			    &probe->initial, transport, &phase2->remote_probe,
 			    &phase2->remote_receive_gain) != PHASE2_RECIPROCAL_PROBE_OK)
 			return false;
 		phase2->remote_probe_stored = true;

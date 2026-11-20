@@ -142,7 +142,7 @@ static inline void pcm_snapshot_phase2(struct pcm_phase2 *phase2)
 	case PCM_PHASE2_INITIAL_PROBE:
 	case PCM_PHASE2_PROBE_TURNAROUND:
 	case PCM_PHASE2_RECIPROCAL_PROBE:
-		pcm_snapshot_info0_exchange(&phase2->state.probe.initial.ranging.info0_exchange);
+		pcm_snapshot_info0_exchange(&phase2->state.probe.ranging.info0_exchange);
 		break;
 	case PCM_PHASE2_INFO1:
 		pcm_snapshot_info1_exchange(&phase2->state.info1);
@@ -168,10 +168,8 @@ static inline bool name(const struct type *left, const struct type *right) \
 STATE_EQUAL(pcm_phase2_owners_equal, pcm_phase2, pcm_snapshot_phase2(copy))
 STATE_EQUAL(pcm_info1_exchanges_equal, pcm_phase2_info1_exchange,
 	pcm_snapshot_info1_exchange(copy))
-STATE_EQUAL(v90_initial_probes_equal, v90_phase2_initial_probe,
-	pcm_snapshot_info0_exchange(&copy->ranging.info0_exchange))
 STATE_EQUAL(pcm_probe_owners_equal, pcm_phase2_probe,
-	pcm_snapshot_info0_exchange(&copy->initial.ranging.info0_exchange))
+	pcm_snapshot_info0_exchange(&copy->ranging.info0_exchange))
 #undef STATE_EQUAL
 
 static inline bool pcm_phase3_entries_equal(

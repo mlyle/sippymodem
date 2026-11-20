@@ -16,11 +16,11 @@ static bool probe_completed(
 	const struct pcm_phase2_probe *probe, enum v90_modem_role role)
 {
 	return probe != NULL && pcm_phase2_probe_ranging_complete(probe) &&
-	       probe->initial.ranging.info0_exchange.local_role == role &&
+	       probe->ranging.info0_exchange.local_role == role &&
 	       phase2_reciprocal_probe_is_complete(&probe->reciprocal) &&
 	       phase2_reciprocal_probe_is_valid(
-		       &probe->reciprocal, &probe->turnaround, &probe->initial.control,
-		       &probe->initial.ranging.info0_exchange.transport);
+		       &probe->reciprocal, &probe->turnaround, &probe->initial,
+		       &probe->ranging.info0_exchange.transport);
 }
 
 static bool analog_record_is_valid(
@@ -168,7 +168,7 @@ enum phase2_info1_result pcm_phase2_info1_init_digital(
 	initialized.digital = *local_info1d;
 	initialized.protocol = local_info1d->protocol;
 	initialized.digital_record_stored = true;
-	const struct pcm_phase2_ranging *ranging = &completed_probe->initial.ranging;
+	const struct pcm_phase2_ranging *ranging = &completed_probe->ranging;
 	if (phase2_info1_init_signal_b(
 		    &initialized.control,
 		    v34_phase2_tone_nominal_amplitude(
@@ -194,7 +194,7 @@ static enum phase2_info1_result initialize_analog(
 	if (exchange == NULL || !pcm_protocol_is_valid(protocol) ||
 	    !probe_completed(completed_probe, V90_ANALOG_MODEM))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
-	const struct pcm_phase2_ranging *ranging = &completed_probe->initial.ranging;
+	const struct pcm_phase2_ranging *ranging = &completed_probe->ranging;
 	const struct v34_phase2_tone_transmitter *tone =
 		&ranging->info0_exchange.transport.tone_transmitter;
 	if (phase2_info1_init_signal_a(

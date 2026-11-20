@@ -2004,7 +2004,7 @@ static bool run_configured_call(
 			if (digital.call.stage == PCM_CALL_PHASE2 &&
 			    (digital.call.state.phase2.stage == PCM_PHASE2_PROBE_TURNAROUND ||
 			     (digital.call.state.phase2.stage == PCM_PHASE2_INITIAL_PROBE &&
-			      digital.call.state.phase2.state.probe.initial.control.phase ==
+			      digital.call.state.phase2.state.probe.initial.phase ==
 				      PHASE2_INITIAL_PROBE_SIGNAL_B_TONE)))
 				probe_interrupted = true;
 			if (probe_interrupted && lost_a_samples < 8000u) {
@@ -3605,7 +3605,7 @@ static bool run_probe_response_timeout(
 	}
 	CHECK(probe_started && source->round_trip_delay_stored &&
 	      (role == V90_ANALOG_MODEM ?
-		      source->state.phase2.state.probe.initial.control.path.transmit
+		      source->state.phase2.state.probe.initial.path.transmit
 			      .samples_emitted :
 		      source->state.phase2.state.probe.reciprocal.path.transmit
 			      .samples_emitted) == 0u,
