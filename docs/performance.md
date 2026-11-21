@@ -34,6 +34,40 @@ handles SIP, sockets and public API calls. A shared server is bounded to
 a CPU-capacity claim. Size the deployment from sustained calls, training
 bursts, application load and host scheduling as well as the core benchmark.
 
+## Raspberry Pi 5 release rehearsal, November 21, 2026
+
+The Pi answered modem calls through termserv and relayed them to a local
+SSH echo service. A separate Linux host staggered dials by two seconds and
+staggered hangups. Each caller compared the returned byte stream. The modem
+runtime and DSP came from `1fdc5890`, with the Linux release build changes
+used in `603d91f4`. Termserv was built from `601f36b`.
+
+| Active calls | Time at peak | Verified echo bytes | Peak host CPU | Termserv / combined RSS | Max temperature |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 5 | 60 s | 1,280,896 | 30.6% | 58.6 / 102.5 MiB | 69.4 °C |
+| 7 | 90 s | 2,100,736 | 36.9% | 60.2 / 104.2 MiB | 77.7 °C |
+
+CPU is the peak one-second interval across all four cores. Combined RSS
+includes termserv and the SSH echo service. The five-call mix was two
+56k/33.6k V.90 calls, one 56k/48k and one 56k/33.6k V.92 call, and one
+33.6k/33.6k V.34 call. The seven-call wave added V.32bis at 14.4k and
+V.22bis at 2.4k. All used LAPM with compression off. Cooling hardware
+was unconfirmed, and the samples showed no active thermal throttling.
+
+An instrumented repeat timed the Pi audio path with the ARM generic timer.
+The three-frame measurement sums consecutive 20 ms frames on a single
+line, excluding gaps between processing calls.
+
+| Active calls | Frames timed | Worst frame | Worst three | Frames over 20 ms |
+| ---: | ---: | ---: | ---: | ---: |
+| 5 | 20,290 | 10.09 ms | 23.04 ms | 0 |
+| 7 | 39,863 | 7.89 ms | 20.15 ms | 0 |
+
+The Pi reported zero RTP sequence gaps, late samples, and concealed samples
+in both timed waves. These observations cover this mixed SSH workload and
+its duration. A deployment with compression, a different call mix, or a real
+BBS application should measure its own capacity.
+
 ## Recorded baseline: 2026-10-04
 
 An earlier core revision, `d9e06e7b`, was measured on a Ryzen 7 5825U and a
