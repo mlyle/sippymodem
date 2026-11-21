@@ -1,8 +1,8 @@
 # sippymodem
 
 sippymodem makes and answers dial-up modem calls over SIP and RTP. Call a
-BBS, put a BBS or legacy device service on a phone number, or embed modem
-lines in a terminal server. It runs in user space without local modem hardware.
+BBS or put a BBS, maintenance console, or data collector on a phone number.
+It runs in user space without local modem hardware.
 
 `slmodemd` is a single-line modem with Hayes AT commands on a PTY.
 `libsippymodem` provides a native byte API, explicit call control, and SIP

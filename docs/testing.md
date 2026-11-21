@@ -125,6 +125,19 @@ BUSY retries and inter-call cooldowns are bounded and recorded. The ledger,
 seed, schedule, result records, logs and captures remain in owner-only ignored
 artifacts. Do not publish those files without checking them for site information.
 
+### Check a large file transfer
+
+Reserve one physical modem for a direct ATA call. Run a file-transfer program
+on each end and use the serial flow control configured for each device.
+Send a different known binary file in each direction and compare the received
+size and SHA-256 with the source. Record negotiated rates, error control,
+compression, retrains, and file-transfer retries.
+
+To test the final acknowledgment, let C-Kermit exit as soon as its last
+receive completes. Check that the sender also exits successfully and the
+receiver's file matches. The PTY close should give queued acknowledgments
+time to leave before hangup.
+
 ### Two modems on one ATA
 
 Use one owner-only campaign configuration per FXS port, with distinct

@@ -1,6 +1,6 @@
 # Rates and processing performance
 
-The [README rate table](../README.md#modulations-and-modes) lists nominal
+The [README rate table](../README.md#modes) lists nominal
 physical bitrates. Framing consumes some of those bits; compression can make
 application throughput higher or lower depending on the data. Status reports
 transmit and receive bitrates separately, along with their symbol clocks.
