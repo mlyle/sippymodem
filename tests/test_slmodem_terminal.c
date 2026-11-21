@@ -11,7 +11,7 @@
 struct capture {
 	unsigned int attribute_updates;
 	unsigned int events;
-	unsigned int hangups;
+	bool request_hangup;
 	bool short_write;
 	char input[16];
 	size_t input_count;
@@ -19,11 +19,12 @@ struct capture {
 
 static struct capture capture;
 
-void modem_update_termios(
+bool modem_update_termios(
 	struct modem *modem, const struct termios *attributes)
 {
 	capture.attribute_updates++;
 	modem->termios = *attributes;
+	return capture.request_hangup;
 }
 
 int modem_service_event(struct modem *modem)
@@ -33,12 +34,6 @@ int modem_service_event(struct modem *modem)
 	capture.events++;
 	modem->event = 0;
 	return 1;
-}
-
-void modem_hangup(struct modem *modem)
-{
-	(void)modem;
-	capture.hangups++;
 }
 
 int modem_write(struct modem *modem, const char *bytes, int count)
@@ -95,14 +90,17 @@ static bool test_applies_control_state(void)
 		      capture.events == 1 && modem.event == 0,
 	      "pending modem event was not serviced once");
 	CHECK(slmodem_terminal_disconnect(&terminal) ==
-		      SLMODEM_TERMINAL_IDLE &&
-		      capture.hangups == 0,
+		      SLMODEM_TERMINAL_IDLE,
 	      "disconnect ignored terminal HUPCL state");
 	modem.termios.c_cflag |= HUPCL;
 	CHECK(slmodem_terminal_disconnect(&terminal) ==
-			      SLMODEM_TERMINAL_OK &&
-		      capture.hangups == 1,
-	      "HUPCL disconnect did not reach the modem");
+			      SLMODEM_TERMINAL_HANGUP_REQUESTED,
+	      "HUPCL did not request hangup");
+	capture.request_hangup = true;
+	attributes.c_lflag = 0;
+	CHECK(slmodem_terminal_apply_attributes(&terminal, &attributes) ==
+			      SLMODEM_TERMINAL_HANGUP_REQUESTED,
+	      "termios hangup request did not reach the runtime");
 	return true;
 }
 

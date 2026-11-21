@@ -1356,7 +1356,9 @@ static bool test_call_progress_cancels_without_media(void)
 			struct termios termios = modem->termios;
 			CHECK(cfsetispeed(&termios, B0) == 0 && cfsetospeed(&termios, B0) == 0,
 			      "DTR cancellation fixture failed");
-			modem_update_termios(modem, &termios);
+			CHECK(modem_update_termios(modem, &termios),
+			      "zero termios speed did not request cancellation");
+			modem_hangup(modem);
 			break;
 		}
 		}

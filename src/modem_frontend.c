@@ -415,15 +415,14 @@ void modem_frontend_init(struct modem *modem)
 	}
 }
 
-void modem_update_termios(struct modem *m, const struct termios *tios)
+bool modem_update_termios(struct modem *m, const struct termios *tios)
 {
-	if (cfgetispeed(tios) == B0 || cfgetospeed(tios) == B0) {
-		if (m->state != STATE_MODEM_IDLE)
-			modem_hangup(m);
-	} else {
+	bool drop_dtr = cfgetispeed(tios) == B0 || cfgetospeed(tios) == B0;
+
+	if (!drop_dtr)
 		m->modem_info |= MODEM_SIGNAL_DTR;
-	}
 	m->termios = *tios;
+	return drop_dtr && m->state != STATE_MODEM_IDLE;
 }
 
 void modem_print_version(void)

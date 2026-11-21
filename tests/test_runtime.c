@@ -5,6 +5,7 @@
 
 #include <modem.h>
 #include <modem_frontend.h>
+#include <modem_state.h>
 #include <host.h>
 #include <slmodem_adapter.h>
 #include <slmodem_calls.h>
@@ -53,6 +54,8 @@ struct runtime_capture {
 	unsigned int termios_updates;
 	unsigned int modem_events;
 	unsigned int hangups;
+	unsigned int finish_calls;
+	int finish_pending;
 	char teardown_order[8];
 	size_t teardown_count;
 	bool fail_modem;
@@ -278,11 +281,13 @@ int modem_stop_now(struct modem *modem)
 	return capture.forced_stop_result;
 }
 
-void modem_update_termios(
+bool modem_update_termios(
 	struct modem *modem, const struct termios *attributes)
 {
 	capture.termios_updates++;
 	modem->termios = *attributes;
+	return modem->state != STATE_MODEM_IDLE &&
+		(cfgetispeed(attributes) == B0 || cfgetospeed(attributes) == B0);
 }
 
 int modem_service_event(struct modem *modem)
@@ -298,6 +303,13 @@ void modem_hangup(struct modem *modem)
 {
 	(void)modem;
 	capture.hangups++;
+}
+
+int modem_finish_transmit(struct modem *modem)
+{
+	(void)modem;
+	capture.finish_calls++;
+	return capture.finish_pending;
 }
 
 int modem_write(struct modem *modem, const char *buffer, int count)
@@ -343,6 +355,7 @@ static void queue_call(
 	struct slmodem_calls *calls = context;
 	if (event != NULL) {
 		calls->state = event->state;
+		calls->generation = event->generation;
 		capture.call = *event;
 		capture.call_pending = true;
 	}
@@ -1201,6 +1214,106 @@ static bool test_output_queues_and_call_deadline(void)
 	return true;
 }
 
+static bool test_drains_terminal_on_last_close(void)
+{
+	struct app_config config = runtime_config(false);
+	config.media.frame_duration_ms = 10;
+	config.media.jitter_buffer_ms = 60;
+	config.media.remote_clock = true;
+	memset(&capture, 0, sizeof(capture));
+	capture.wait_ns = UINT64_MAX;
+	struct modem_runtime *runtime = modem_runtime_create(&config, "terminal-hupcl");
+	CHECK(runtime != NULL && modem_runtime_open(runtime) == MODEM_RUNTIME_OK,
+	      "HUPCL fixture failed");
+	struct modem *modem = modem_runtime_modem(runtime);
+	int peer = open(modem_runtime_device_path(runtime), O_RDWR | O_NOCTTY);
+	struct termios attributes;
+	CHECK(peer >= 0 && tcgetattr(peer, &attributes) == 0,
+	      "could not open the terminal slave");
+	attributes.c_cflag |= HUPCL;
+	CHECK(tcsetattr(peer, TCSANOW, &attributes) == 0 &&
+	      write(peer, "end", 3) == 3 &&
+	      modem_runtime_step(runtime, 0, NULL, NULL, NULL) == MODEM_RUNTIME_OK &&
+	      capture.terminal_input_count == 3, "terminal payload did not reach the modem");
+	modem->started = 1;
+	modem->modem_info |= MODEM_SIGNAL_CD;
+	capture.finish_pending = 1;
+	close(peer);
+	(void)modem_runtime_step(runtime, 1, NULL, NULL, NULL);
+	CHECK(capture.finish_calls == 1 && capture.hangups == 0 &&
+	      modem_runtime_terminal_poll_fd(runtime) == -1,
+	      "last close did not start a nonblocking transmit drain");
+	capture.finish_pending = 0;
+	(void)modem_runtime_step(runtime, 2, NULL, NULL, NULL);
+	CHECK(capture.hangups == 0 && modem_runtime_wait_ns(runtime, 2) == 120000000,
+	      "raw completion did not allow time for peer playout");
+	(void)modem_runtime_step(runtime, 120000001, NULL, NULL, NULL);
+	CHECK(capture.hangups == 0, "raw close stopped before the media tail");
+	(void)modem_runtime_step(runtime, 120000002, NULL, NULL, NULL);
+	CHECK(capture.hangups == 1, "raw close did not hang up after media tail");
+	modem_runtime_destroy(runtime);
+	return true;
+}
+
+static bool test_drains_terminal_at_zero_speed(void)
+{
+	for (unsigned int scenario = 0; scenario < 4; ++scenario) {
+		struct app_config config = runtime_config(false);
+		memset(&capture, 0, sizeof(capture));
+		capture.wait_ns = UINT64_MAX;
+		struct modem_runtime *runtime = modem_runtime_create(&config, "terminal-b0");
+		CHECK(runtime != NULL && modem_runtime_open(runtime) == MODEM_RUNTIME_OK,
+		      "B0 fixture failed");
+		struct modem *modem = modem_runtime_modem(runtime);
+		int peer = open(modem_runtime_device_path(runtime), O_RDWR | O_NOCTTY);
+		struct termios attributes;
+		modem->started = 1;
+		modem->state = scenario == 0 ? STATE_DP_ESTAB : STATE_MODEM_ONLINE;
+		if (scenario != 0)
+			modem->modem_info |= MODEM_SIGNAL_CD;
+		modem->cfg.ec = 1;
+		capture.finish_pending = 1;
+		CHECK(peer >= 0 && tcgetattr(peer, &attributes) == 0 &&
+		      cfsetispeed(&attributes, B0) == 0 && cfsetospeed(&attributes, B0) == 0 &&
+		      write(peer, "ACK", 3) == 3 && tcsetattr(peer, TCSANOW, &attributes) == 0,
+		      "could not request B0 with PTY input queued");
+		(void)modem_runtime_step(runtime, 0, NULL, NULL, NULL);
+		if (scenario == 0) {
+			CHECK(capture.hangups == 1 && capture.finish_calls == 0,
+			      "B0 did not cancel a pending call immediately");
+		} else {
+			CHECK(capture.hangups == 0 && capture.finish_calls == 0 &&
+			      capture.terminal_input_count == 3, "B0 discarded pending PTY input");
+			(void)modem_runtime_step(runtime, 1, NULL, NULL, NULL);
+			CHECK(capture.hangups == 0 && capture.finish_calls == 1 &&
+			      modem_runtime_wait_ns(runtime, 1) == 1999999999,
+			      "B0 did not wait for LAPM completion within its deadline");
+			if (scenario == 1) {
+				capture.finish_pending = 0;
+				(void)modem_runtime_step(runtime, 2, NULL, NULL, NULL);
+				CHECK(capture.hangups == 1, "LAPM completion did not hang up");
+			} else if (scenario == 2) {
+				(void)modem_runtime_step(runtime, 2000000000, NULL, NULL, NULL);
+				CHECK(capture.hangups == 1 && modem->disconnect_local &&
+				      modem->disconnect_reason != NULL &&
+				      strcmp(modem->disconnect_reason, "terminal transmit drain timed out") == 0,
+				      "stalled LAPM drain did not time out");
+			} else {
+				capture.emit_call = true;
+				capture.call.direction = SIP_CALL_DIRECTION_INCOMING;
+				capture.call.state = SIP_CALL_CONNECTED;
+				capture.call.generation = 2;
+				(void)modem_runtime_step(runtime, 2000000000, NULL, NULL, NULL);
+				CHECK(capture.hangups == 0 && capture.finish_calls == 1,
+				      "stale B0 request affected a subsequent call");
+			}
+		}
+		close(peer);
+		modem_runtime_destroy(runtime);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -1213,6 +1326,8 @@ int main(void)
 		{ "open and close", test_opens_and_closes_in_dependency_order },
 		{ "lifecycle failures", test_reports_lifecycle_failures },
 		{ "bounded host step", test_steps_bounded_host_and_evidence_work },
+		{ "raw terminal close drains before hangup", test_drains_terminal_on_last_close },
+		{ "B0 drains established calls", test_drains_terminal_at_zero_speed },
 		{ "opt-in signaling trace", test_opt_in_signaling_trace },
 		{ "rate-limited call trace", test_call_trace_is_rate_limited },
 		{ "bounded protocol trace and retained disconnect", test_protocol_trace_bounds_and_retained_failure },

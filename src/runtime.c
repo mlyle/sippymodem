@@ -25,7 +25,17 @@
 #include <sys/ioctl.h>
 #include <syslog.h>
 
-enum { MODEM_RUNTIME_TERMINAL_READ_MAX = 4096 };
+enum {
+	MODEM_RUNTIME_TERMINAL_READ_MAX = 4096,
+	MODEM_RUNTIME_TERMINAL_DRAIN_MS = 2000,
+};
+
+struct terminal_hangup {
+	uint64_t generation;
+	uint64_t deadline;
+	uint64_t raw_tail_deadline;
+	bool input_drained;
+};
 
 struct modem_runtime {
 	struct modem_line *line;
@@ -33,6 +43,8 @@ struct modem_runtime {
 	unsigned char rx_storage[16384], control_storage[4096];
 	bool control_overflow;
 	uint64_t attempt_deadline;
+	struct terminal_hangup terminal_hangup;
+	uint64_t raw_tail_ns;
 	/* Borrowed views of the line owner; the compatibility frontend owns PTY. */
 	struct modem *modem;
 	struct slmodem_calls *calls;
@@ -175,6 +187,11 @@ struct modem_runtime *modem_runtime_create(
 	if (runtime == NULL)
 		return NULL;
 	runtime->trace_enabled = config->sip.trace_enabled;
+	/* Allow a peer with comparable buffering to play the final raw
+	 * symbols. Budget for prefill, one packet, and scheduler catch-up. */
+	runtime->raw_tail_ns = UINT64_C(1000000) *
+		(media_receive_prefill_ms(&config->media) +
+		 (uint64_t)config->media.frame_duration_ms * (MEDIA_MAX_CATCHUP_FRAMES + 1));
 	runtime->line = modem_line_create(config, modem_name,
 		config->sip.trace_enabled ? trace_signaling : NULL);
 	if (runtime->line == NULL)
@@ -269,6 +286,7 @@ enum modem_runtime_result modem_runtime_close(
 
 	if (runtime == NULL)
 		return MODEM_RUNTIME_INVALID_ARGUMENT;
+	runtime->terminal_hangup = (struct terminal_hangup){0};
 	if (runtime->modem->started)
 		modem_note_disconnect(runtime->modem, true, "local runtime shutdown");
 	stop_result = modem_report_remote_call_end(runtime->modem);
@@ -322,8 +340,59 @@ static enum modem_runtime_result drain_call_transitions(
 	return MODEM_RUNTIME_CALL_ERROR;
 }
 
+static void request_terminal_hangup(struct modem_runtime *runtime,
+	uint64_t now_ns, bool input_drained)
+{
+	struct terminal_hangup *hangup = &runtime->terminal_hangup;
+
+	if (!runtime->modem->started || !(runtime->modem->modem_info & MODEM_SIGNAL_CD)) {
+		modem_hangup(runtime->modem);
+		return;
+	}
+	if (hangup->deadline == 0) {
+		hangup->generation = runtime->calls->generation;
+		hangup->deadline = add_u64_saturating(now_ns,
+			UINT64_C(1000000) * MODEM_RUNTIME_TERMINAL_DRAIN_MS);
+	}
+	hangup->input_drained |= input_drained;
+}
+
+static void advance_terminal_hangup(struct modem_runtime *runtime, uint64_t now_ns)
+{
+	struct terminal_hangup *hangup = &runtime->terminal_hangup;
+	struct modem *modem = runtime->modem;
+	int pending;
+
+	if (hangup->deadline == 0)
+		return;
+	if (!modem->started || !(modem->modem_info & MODEM_SIGNAL_CD) ||
+	    runtime->calls->receive_draining || hangup->generation != runtime->calls->generation) {
+		*hangup = (struct terminal_hangup){0};
+		return;
+	}
+	if (now_ns >= hangup->deadline) {
+		modem_note_disconnect(modem, true, "terminal transmit drain timed out");
+	} else {
+		if (!hangup->input_drained)
+			return;
+		pending = modem_finish_transmit(modem);
+		if (pending > 0)
+			return;
+		if (pending < 0) {
+			modem_note_disconnect(modem, true, "terminal transmit drain unavailable");
+		} else if (!modem->cfg.ec) {
+			if (hangup->raw_tail_deadline == 0)
+				hangup->raw_tail_deadline = add_u64_saturating(now_ns, runtime->raw_tail_ns);
+			if (now_ns < hangup->raw_tail_deadline)
+				return;
+		}
+	}
+	*hangup = (struct terminal_hangup){0};
+	modem_hangup(modem);
+}
+
 static enum modem_runtime_result advance_terminal(
-	struct modem_runtime *runtime, size_t *bytes_received)
+	struct modem_runtime *runtime, uint64_t now_ns, size_t *bytes_received)
 {
 	char buffer[MODEM_RUNTIME_TERMINAL_READ_MAX];
 	struct termios attributes;
@@ -340,8 +409,10 @@ static enum modem_runtime_result advance_terminal(
 	runtime->last_modem_terminal_result =
 		slmodem_terminal_apply_attributes(
 			&runtime->modem_terminal, &attributes);
-	if (runtime->last_modem_terminal_result ==
-	    SLMODEM_TERMINAL_OK)
+	if (runtime->last_modem_terminal_result == SLMODEM_TERMINAL_HANGUP_REQUESTED) {
+		request_terminal_hangup(runtime, now_ns, false);
+		worked = true;
+	} else if (runtime->last_modem_terminal_result == SLMODEM_TERMINAL_OK)
 		worked = true;
 	else if (runtime->last_modem_terminal_result !=
 		 SLMODEM_TERMINAL_IDLE)
@@ -355,6 +426,8 @@ static enum modem_runtime_result advance_terminal(
 	else if (runtime->last_modem_terminal_result !=
 		 SLMODEM_TERMINAL_IDLE)
 		return MODEM_RUNTIME_MODEM_TERMINAL_ERROR;
+	if (runtime->terminal_hangup.input_drained)
+		return worked ? MODEM_RUNTIME_OK : MODEM_RUNTIME_IDLE;
 	runtime->last_modem_terminal_result =
 		slmodem_terminal_input_capacity(
 			&runtime->modem_terminal, &available);
@@ -367,6 +440,12 @@ static enum modem_runtime_result advance_terminal(
 		return worked ? MODEM_RUNTIME_OK : MODEM_RUNTIME_IDLE;
 	runtime->last_terminal_result = pty_terminal_read(
 		runtime->terminal, buffer, available, &count);
+	/* On B0, capture bytes still waiting in the master before sealing TX.
+	 * On last close, read has already delivered any available bytes. */
+	if (runtime->terminal_hangup.deadline != 0 &&
+	    (runtime->last_terminal_result == PTY_TERMINAL_IDLE ||
+	     runtime->last_terminal_result == PTY_TERMINAL_CLIENT_DISCONNECTED))
+		runtime->terminal_hangup.input_drained = true;
 	if (runtime->last_terminal_result == PTY_TERMINAL_IDLE) {
 		return worked ? MODEM_RUNTIME_OK : MODEM_RUNTIME_IDLE;
 	}
@@ -377,10 +456,9 @@ static enum modem_runtime_result advance_terminal(
 			runtime->last_modem_terminal_result =
 				slmodem_terminal_disconnect(
 					&runtime->modem_terminal);
-			if (runtime->last_modem_terminal_result !=
-				    SLMODEM_TERMINAL_OK &&
-			    runtime->last_modem_terminal_result !=
-				    SLMODEM_TERMINAL_IDLE)
+			if (runtime->last_modem_terminal_result == SLMODEM_TERMINAL_HANGUP_REQUESTED)
+				request_terminal_hangup(runtime, now_ns, true);
+			else if (runtime->last_modem_terminal_result != SLMODEM_TERMINAL_IDLE)
 				return MODEM_RUNTIME_MODEM_TERMINAL_ERROR;
 			worked = true;
 		}
@@ -487,7 +565,7 @@ enum modem_runtime_result modem_runtime_step(
 		*frames_processed = 0;
 	if (runtime == NULL)
 		return MODEM_RUNTIME_INVALID_ARGUMENT;
-	terminal_result = advance_terminal(runtime, terminal_bytes_received);
+	terminal_result = advance_terminal(runtime, now_ns, terminal_bytes_received);
 	runtime->last_host_result = modem_host_step(
 		runtime->host, now_ns, datagrams_received, frames_processed);
 	/* Retain our decision before the resulting SIP idle event is drained. */
@@ -514,6 +592,7 @@ enum modem_runtime_result modem_runtime_step(
 			"terminal control output overflow" : "raw DTE receive overflow");
 		(void)modem_stop_now(runtime->modem);
 	}
+	advance_terminal_hangup(runtime, now_ns);
 	if (runtime->control_overflow)
 		terminal_result = MODEM_RUNTIME_TERMINAL_ERROR;
 	if (!flush_output(runtime, &runtime->control_output) ||
@@ -555,10 +634,14 @@ uint64_t modem_runtime_wait_ns(
 	if (runtime == NULL)
 		return UINT64_MAX;
 	uint64_t wait = modem_host_wait_ns(runtime->host, now_ns);
-	if (runtime->attempt_deadline != 0) {
-		uint64_t remaining = runtime->attempt_deadline <= now_ns ? 0 : runtime->attempt_deadline - now_ns;
-		if (remaining < wait)
-			wait = remaining;
+	const uint64_t deadlines[] = { runtime->attempt_deadline,
+		runtime->terminal_hangup.deadline, runtime->terminal_hangup.raw_tail_deadline };
+	for (size_t i = 0; i < sizeof(deadlines) / sizeof(deadlines[0]); ++i) {
+		if (deadlines[i] != 0) {
+			uint64_t remaining = deadlines[i] <= now_ns ? 0 : deadlines[i] - now_ns;
+			if (remaining < wait)
+				wait = remaining;
+		}
 	}
 	return wait;
 }
@@ -607,6 +690,7 @@ int modem_runtime_terminal_poll_fd(
 	size_t capacity;
 
 	if (runtime == NULL ||
+	    runtime->terminal_hangup.input_drained ||
 	    runtime->last_terminal_result ==
 		    PTY_TERMINAL_CLIENT_DISCONNECTED ||
 	    slmodem_terminal_input_capacity(

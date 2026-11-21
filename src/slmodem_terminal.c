@@ -70,8 +70,8 @@ slmodem_terminal_apply_attributes(
 		return SLMODEM_TERMINAL_INVALID_ARGUMENT;
 	if (attributes_equal(attributes, &terminal->modem->termios))
 		return SLMODEM_TERMINAL_IDLE;
-	modem_update_termios(terminal->modem, attributes);
-	return SLMODEM_TERMINAL_OK;
+	return modem_update_termios(terminal->modem, attributes) ?
+		SLMODEM_TERMINAL_HANGUP_REQUESTED : SLMODEM_TERMINAL_OK;
 }
 
 enum slmodem_terminal_result
@@ -136,10 +136,8 @@ slmodem_terminal_disconnect(
 {
 	if (terminal == NULL || terminal->modem == NULL)
 		return SLMODEM_TERMINAL_INVALID_ARGUMENT;
-	if ((terminal->modem->termios.c_cflag & HUPCL) == 0)
-		return SLMODEM_TERMINAL_IDLE;
-	modem_hangup(terminal->modem);
-	return SLMODEM_TERMINAL_OK;
+	return terminal->modem->termios.c_cflag & HUPCL ?
+		SLMODEM_TERMINAL_HANGUP_REQUESTED : SLMODEM_TERMINAL_IDLE;
 }
 
 const char *slmodem_terminal_result_name(
@@ -150,6 +148,8 @@ const char *slmodem_terminal_result_name(
 		return "ok";
 	case SLMODEM_TERMINAL_IDLE:
 		return "idle";
+	case SLMODEM_TERMINAL_HANGUP_REQUESTED:
+		return "terminal requested hangup";
 	case SLMODEM_TERMINAL_INVALID_ARGUMENT:
 		return "invalid argument";
 	case SLMODEM_TERMINAL_INVALID_STATE:

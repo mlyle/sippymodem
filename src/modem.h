@@ -569,7 +569,8 @@ extern int modem_report_incoming_call(struct modem *m);
 extern int modem_report_outgoing_call_connected(struct modem *m);
 extern int modem_report_remote_call_end(struct modem *m);
 #ifndef _WIN32
-extern void modem_update_termios(
+/* Return whether the new speed requests a local hangup. */
+extern bool modem_update_termios(
 	struct modem *m, const struct termios *tios);
 #endif
 extern void modem_error  (struct modem *m);

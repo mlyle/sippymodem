@@ -52,6 +52,11 @@ watch in terminal software. In raw modem mode the line also uses 8N1. Before
 using a legacy application, check its [AT commands and modem signal
 requirements](at-commands.md#legacy-forms-and-limits).
 
+When an online terminal drops DTR with speed zero or closes the PTY with
+`HUPCL`, the modem gives queued output up to two seconds to finish before
+starting hangup. LAPM waits for acknowledgments. Raw mode allows time for
+the last media to play. Use `ATH0` to start hangup immediately.
+
 The executable reads these settings once at startup:
 
 | Setting | Default / purpose |
