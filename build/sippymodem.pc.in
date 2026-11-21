@@ -5,7 +5,6 @@ includedir=@includedir@
 Name: sippymodem
 Description: Native dial-up modem over SIP and RTP
 Version: @version@
-Requires.private: @pjsip_package@
-Libs: -L"${libdir}" -lsippymodem
+Libs: @library_flag@ -lsippymodem
 Libs.private: @private_libs@
-Cflags: -I"${includedir}"
+Cflags: @include_flag@

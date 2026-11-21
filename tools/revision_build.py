@@ -279,6 +279,16 @@ def _export_tree(
         )
 
 
+def export_revision(repository: Path, revision: str,
+                    destination: Path) -> tuple[str, list[dict[str, str]]]:
+    """Export an exact revision and each pinned submodule into a new directory."""
+    repository = _repository_root(repository.resolve())
+    commit = _resolve_revision(repository, revision)
+    submodules: list[dict[str, str]] = []
+    _export_tree(repository, commit, destination, submodules)
+    return commit, submodules
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:

@@ -4,7 +4,9 @@
 #endif
 
 #include "sippymodem.h"
+#ifndef SIPPYMODEM_INSTALLED_TEST
 #include "net_socket.h"
+#endif
 #include "test.h"
 
 #include <string.h>
@@ -36,6 +38,7 @@ static bool tick(struct sippymodem_server *server)
 	return true;
 }
 
+#ifndef SIPPYMODEM_INSTALLED_TEST
 static bool test_idle_rtp_wait(void)
 {
 	struct sippymodem_server_config config;
@@ -93,6 +96,8 @@ static bool test_idle_rtp_wait(void)
 	sippymodem_server_destroy(server);
 	return true;
 }
+
+#endif
 
 static bool test_portable_owner_loop(void)
 {
@@ -222,7 +227,11 @@ static bool test_wait_handle_cleanup(void)
 
 int main(void)
 {
-	if (!test_idle_rtp_wait() || !test_portable_owner_loop())
+#ifndef SIPPYMODEM_INSTALLED_TEST
+	if (!test_idle_rtp_wait())
+		return 1;
+#endif
+	if (!test_portable_owner_loop())
 		return 1;
 #ifdef _WIN32
 	if (!test_wait_handle_cleanup())

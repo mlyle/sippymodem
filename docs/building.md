@@ -97,8 +97,34 @@ create accounts, change SIP settings, or start services.
 
 The shared library currently has an unversioned filename and no stable ABI
 release promise. Recompile consumers against the installed headers when
-updating the library. The `2.9.11` metadata and `AT+GMR` value are the inherited
-modem compatibility version.
+updating the library. The SDK package version comes from `build/version`.
+`AT+GMR` reports the inherited modem compatibility version.
+
+## Build a Linux release
+
+From a checkout with the pinned PJSIP submodule initialized, run:
+
+```sh
+python3 tools/release.py --revision HEAD
+```
+
+Use a commit or tag that contains the release tooling and version. The command
+uses a fresh export of that revision and the pinned submodule, then stages
+`make install`. It writes a Linux binary tarball, its matching source tarball,
+and `SHA256SUMS` under `.build/release/`. Run it on the Linux architecture
+you intend to ship.
+
+Verify the checksums, extract the binary tarball, then run this from the
+matching source checkout or source archive:
+
+```sh
+python3 tools/release_smoke.py /path/to/extracted-binary
+```
+
+The smoke check dials only loopback addresses. It checks CLI legacy fallback
+and V.34/LAPM, then builds and runs a consumer using the installed shared SDK.
+The binary archive's README explains how to run directly from the extracted
+directory.
 
 ## macOS and Windows toolchains
 
@@ -227,14 +253,10 @@ static SDK. The dynamic loader must also find `libsippymodem.so`: configure
 its normal system search path, use an application rpath, or set
 `LD_LIBRARY_PATH` for a local development run.
 
-The `.pc` file declares PJSIP as a private dependency. Its development metadata
-must be discoverable for `pkg-config --cflags`, and static linking additionally
-needs its libraries. With the bundled SDK, add
-`$PWD/.build/pjproject/install/lib/pkgconfig` to `PKG_CONFIG_PATH`; it is not
-installed by `make install`. For deployment of a static SDK, supply the matching
-PJSIP development package as well.
-
-To force the modem archive while retaining its private link dependencies:
+The installed headers and metadata are sufficient for shared linking. To
+link the modem archive, use the matching PJSIP development SDK. For bundled
+PJSIP, add `$PWD/.build/pjproject/install/lib/pkgconfig` from the build tree to
+`PKG_CONFIG_PATH`, then run:
 
 ```sh
 cc app.c -o app $(pkg-config --cflags sippymodem) \
@@ -242,8 +264,6 @@ cc app.c -o app $(pkg-config --cflags sippymodem) \
   $(pkg-config --static --libs libpjproject) -lm
 ```
 
-This selects the modem archive explicitly; the executable can still use the
-host's shared C/system libraries. `pkg-config --static --libs sippymodem` also
-reports the full dependency list for build systems that choose archives
-themselves. See the [API guide](library-api.md) for the lifecycle and ownership
-rules.
+This selects the modem archive explicitly. The executable can still use the
+host's shared C and system libraries. See the [API guide](library-api.md) for
+lifecycle and ownership rules.

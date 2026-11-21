@@ -24,11 +24,12 @@ PKG_CONFIG_FILE := .build/sippymodem.pc
 
 .PHONY: install uninstall
 
-$(PKG_CONFIG_FILE): build/sippymodem.pc.in tools/pkg_config.py src/modem.c FORCE
+$(PKG_CONFIG_FILE): build/sippymodem.pc.in tools/pkg_config.py build/version FORCE
 	@mkdir -p $(dir $@)
 	$(PYTHON) tools/pkg_config.py --prefix "$(prefix)" --libdir "$(libdir)" \
-		--includedir "$(includedir)" --pjsip-package "$(PJSIP_PACKAGE)" \
-		--private-libs="-lm $(PLATFORM_LIBS)" > "$@"
+		--includedir "$(includedir)" \
+		--private-libs="-lm $(PLATFORM_LIBS)" \
+		$(if $(filter 1,$(RELOCATABLE_SDK)),--relocatable) > "$@"
 
 .PHONY: FORCE
 FORCE:

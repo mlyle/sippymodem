@@ -43,31 +43,14 @@ site information before sharing them.
 
 ## Direct launch and SIP settings
 
-For a direct peer, replace the example URI before dialing:
+Use the [quick start](quickstart.md) for a direct SIP call. If you built from
+source, run `./src/slmodemd`. An installed modem runs as `slmodemd`. The
+Kermit setup and AT commands are the same for each.
 
-```sh
-SIP_REGISTER=0 SIP_TARGET=sip:modem@peer.example.invalid ./src/slmodemd
-```
-
-After installation, use `slmodemd` in place of `./src/slmodemd`.
-Keep that process running, then start `kermit -Y` in another terminal. At
-Kermit’s prompt, replace `/dev/pts/7` below with the PTY path the modem printed:
-
-```text
-set carrier-watch off
-set flow-control none
-set line /dev/pts/7
-set speed 115200
-connect
-```
-
-Type `AT` followed by Enter; the modem should reply `OK`. `ATDT` calls the
-configured direct peer. With a provider account, `ATDT<number>` calls a
-telephone number. Wait for `CONNECT` before sending application bytes.
-For incoming calls, use `ATS0=1`, or answer a `RING` with `ATA`.
-The PTY speed is a terminal setting; the negotiated bitrate is independent of
-it. `Ctrl-\` followed by `C` returns to Kermit’s prompt, and `exit` quits it.
-Ctrl-C in the modem’s terminal stops the modem.
+The PTY carries bytes. Use 8N1 and disable hardware flow control and carrier
+watch in terminal software. In raw modem mode the line also uses 8N1. Before
+using a legacy application, check its [AT commands and modem signal
+requirements](at-commands.md#legacy-forms-and-limits).
 
 The executable reads these settings once at startup:
 

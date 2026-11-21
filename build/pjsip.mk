@@ -93,7 +93,7 @@ $(PJSIP_CONFIGURE_STAMP): build/compiler.mk build/pjsip.mk $(PJSIP_CONFIG_HEADER
 $(PJSIP_PC_FILE): $(PJSIP_CONFIGURE_STAMP)
 	$(MAKE) -C $(PJSIP_SOURCE_DIR) CC="$(CC)" CXX="$(CXX)" dep
 	$(MAKE) -C $(PJSIP_SOURCE_DIR) CC="$(CC)" CXX="$(CXX)" lib
-	$(MAKE) -C $(PJSIP_SOURCE_DIR) CC="$(CC)" CXX="$(CXX)" install
+	$(MAKE) -C $(PJSIP_SOURCE_DIR) CC="$(CC)" CXX="$(CXX)" install DESTDIR=
 	test -f "$@"
 else
 pjsip:

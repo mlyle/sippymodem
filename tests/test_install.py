@@ -19,13 +19,16 @@ class InstallTests(unittest.TestCase):
             with self.subTest(system=system):
                 self.check_staged_install(system)
 
-    def check_staged_install(self, system: str) -> None:
+    def test_relocated_sdk_handles_paths_with_spaces(self) -> None:
+        self.check_staged_install("Linux", relocatable=True)
+
+    def check_staged_install(self, system: str, relocatable: bool = False) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             tree, stage = work / "source", work / "stage"
             for directory in ("src", "build", "tools", "examples/systemd"):
                 (tree / directory).mkdir(parents=True)
-            for name in ("build/sippymodem.pc.in", "tools/pkg_config.py", "src/modem.c"):
+            for name in ("build/sippymodem.pc.in", "tools/pkg_config.py", "build/version"):
                 shutil.copy2(ROOT / name, tree / name)
             installed = {
                 "bin/slmodemd": ("src/slmodemd", 0o755),
@@ -61,7 +64,7 @@ class InstallTests(unittest.TestCase):
             unrelated.write_text("local configuration\n", encoding="ascii")
             command = ["make", "--no-print-directory", "-f", str(ROOT / "build/install.mk"),
                        "--eval=all: ; @:", f"PREFIX={prefix}", f"DESTDIR={stage}",
-                       "PJSIP_PACKAGE=libpjproject", f"TARGET_SYSTEM={system}"]
+                       f"TARGET_SYSTEM={system}", f"RELOCATABLE_SDK={int(relocatable)}"]
             result = subprocess.run(command + ["install"], cwd=tree, capture_output=True,
                                     text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -70,22 +73,31 @@ class InstallTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), (tree / source).read_bytes())
                 self.assertEqual(path.stat().st_mode & 0o777, mode)
             metadata = destination / "lib/pkgconfig/sippymodem.pc"
-            self.assertIn("prefix=" + prefix + "\n", metadata.read_text())
+            if not relocatable:
+                self.assertIn("prefix=" + prefix + "\n", metadata.read_text())
             self.assertNotIn(str(stage), metadata.read_text())
-            dependency = metadata.parent / "libpjproject.pc"
-            dependency.write_text("Name: PJSIP fixture\nDescription: Test dependency\n"
-                                  "Version: 1\nLibs: -lpthread\n", encoding="ascii")
+            version = (ROOT / "build/version").read_text().strip()
+            self.assertIn("Version: " + version + "\n", metadata.read_text())
+            # Installed shared consumers need only the public SDK metadata.
             environment = dict(os.environ, PKG_CONFIG_LIBDIR=str(metadata.parent),
                                PKG_CONFIG_PATH="")
-            flags = subprocess.check_output(["pkg-config", "--cflags", "--static", "--libs",
+            flags = subprocess.check_output(["pkg-config", "--cflags", "--libs",
                                              "sippymodem"], env=environment, text=True)
-            self.assertIn("-I" + prefix + "/include", shlex.split(flags))
-            self.assertIn("-L" + prefix + "/lib", shlex.split(flags))
-            self.assertIn("-lpthread", shlex.split(flags))
+            arguments = shlex.split(flags)
+            if relocatable:
+                for option, relative in (("-I", "include"), ("-L", "lib")):
+                    resolved = [Path(flag[2:]).resolve() for flag in arguments
+                                if flag.startswith(option)]
+                    self.assertEqual(resolved, [destination / relative])
+            else:
+                self.assertIn("-I" + prefix + "/include", arguments)
+                self.assertIn("-L" + prefix + "/lib", arguments)
+            self.assertIn("-lsippymodem", arguments)
             if system == "Windows":
+                flags = subprocess.check_output(["pkg-config", "--static", "--libs",
+                                                 "sippymodem"], env=environment, text=True)
                 self.assertIn("-lws2_32", shlex.split(flags))
                 self.assertIn("-lbcrypt", shlex.split(flags))
-            dependency.unlink()
             self.assertEqual(sorted(p.name for p in (destination / "include").iterdir()),
                              ["sippymodem.h", "sippymodem_fd.h"])
             result = subprocess.run(command + ["uninstall"], cwd=tree, capture_output=True,
@@ -97,7 +109,6 @@ class InstallTests(unittest.TestCase):
         result = subprocess.run([
             "python3", str(ROOT / "tools/pkg_config.py"), "--prefix=/usr/local\nLibs: -levil",
             "--libdir=/usr/local/lib", "--includedir=/usr/local/include",
-            "--pjsip-package=libpjproject",
         ], capture_output=True, text=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
