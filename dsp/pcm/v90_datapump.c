@@ -9,6 +9,7 @@
 #include "datapump_timing.h"
 #include "memory_region.h"
 #include "modem.h"
+#include "modem_state.h"
 #include "pcm_call.h"
 #include "training_session.h"
 #include "v8_datapump.h"
@@ -61,6 +62,11 @@ struct v90_datapump {
 	struct v92_echo_timing pcm_echo_timing;
 	struct v92_b1_echo b1_echo;
 	struct pcm_tx_recovery transmit_recovery;
+	struct {
+		uint64_t sample;
+		unsigned phase;
+		bool attempted;
+	} xid_recovery;
 };
 
 static struct dp *create_v90(
@@ -719,6 +725,20 @@ static bool transmit_recovery_observation(struct v90_datapump *datapump,
 
 static void note_transmit_timing(struct v90_datapump *datapump, int shift)
 {
+	const struct modem *modem = datapump->dp.modem;
+	if (modem->state == STATE_EC_ESTAB) {
+		if (datapump->caller && !datapump->xid_recovery.attempted &&
+		    pcm_upstream_receiver(datapump)) {
+			if (modem->count - datapump->xid_recovery.sample > 5u * MODEM_RATE)
+				datapump->xid_recovery.phase = 0;
+			int phase = shift % V90_CP_FRAME_INTERVALS +
+				(int)datapump->xid_recovery.phase;
+			datapump->xid_recovery.phase =
+				(unsigned)(phase + V90_CP_FRAME_INTERVALS) % V90_CP_FRAME_INTERVALS;
+			datapump->xid_recovery.sample = modem->count;
+		}
+		return;
+	}
 	struct modem_tx_recovery observation;
 	if (!transmit_recovery_observation(datapump, &observation))
 		return;
@@ -766,7 +786,22 @@ static void service_link_v90(struct dp *dp)
 {
 	struct v90_datapump *datapump = v90_from_dp(dp);
 	struct modem_tx_recovery observation;
-	if (datapump == NULL || !transmit_recovery_observation(datapump, &observation))
+	if (datapump == NULL)
+		return;
+	if (dp->modem->state == STATE_EC_ESTAB) {
+		/* Fresh inbound flags after a partial frame timing shift support
+		 * one short repair. Ordinary LAPM retries still own full recovery. */
+		if (!datapump->xid_recovery.attempted && datapump->xid_recovery.phase &&
+		    dp->modem->count - datapump->xid_recovery.sample <= 5u * MODEM_RATE &&
+		    training_session_is_online(&datapump->training) && pcm_upstream_receiver(datapump) &&
+		    modem_ec_xid_recovery_ready(dp->modem, datapump->xid_recovery.sample,
+			    datapump->call.round_trip_delay_samples)) {
+			datapump->xid_recovery.attempted = true;
+			start_transmit_rate_recovery(datapump);
+		}
+		return;
+	}
+	if (!transmit_recovery_observation(datapump, &observation))
 		return;
 	struct pcm_tx_recovery *recovery = &datapump->transmit_recovery;
 	uint64_t now = dp->modem->count;

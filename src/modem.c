@@ -965,8 +965,9 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 			stop_processing = true;
 			break;
 		}
-		if (ret == DPSTAT_OK && IS_STATE_ONLINE(m->state) && m->dp != NULL &&
-		    m->dp->op->service_link != NULL)
+		if (ret == DPSTAT_OK &&
+		    (IS_STATE_ONLINE(m->state) || m->state == STATE_EC_ESTAB) &&
+		    m->dp != NULL && m->dp->op->service_link != NULL)
 			m->dp->op->service_link(m->dp);
 		/* Bit timers run inside datapump source/sink callbacks. Defer a
 		 * link-quality retrain until the datapump has returned, and never

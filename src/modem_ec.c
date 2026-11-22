@@ -81,6 +81,7 @@ enum {
 		MODEM_RATE * LAPM_ESTABLISHMENT_RECOVERY_SECONDS,
 	/* Faster XIDs must not shorten the initial physical-recovery allowance. */
 	LAPM_XID_RETRAIN_POLLS = 9,
+	LAPM_XID_SHORT_RECOVERY_RETRY = 4,
 };
 
 static bool xid_pending(const struct lapm_state *l);
@@ -1967,6 +1968,31 @@ void modem_ec_stop(struct modem *m)
 	h->tx_preamble_flags = 0;
 	h->tx_preamble_complete = NULL;
 	lapm_disconnect(l);
+}
+
+/* Leave the pending XID and its ordinary retry limits with LAPM. Give
+ * the fourth retry a measured round trip plus time for a slow reply. */
+bool modem_ec_xid_recovery_ready(const struct modem *m,
+	uint64_t timing_sample, uint16_t round_trip_samples)
+{
+	if (m == NULL || !m->cfg.ec || !m->caller || m->state != STATE_EC_ESTAB ||
+	    m->get_bits != modem_hdlc_get_bits || m->put_bits != modem_hdlc_put_bits)
+		return false;
+	const struct lapm_state *l = &m->ec.lapm;
+	if (!xid_pending(l) || l->rtx_count != LAPM_XID_SHORT_RECOVERY_RETRY ||
+	    l->stalled_retrain || m->bit_timer <= 0 || m->bit_timer_func != t401_timeout)
+		return false;
+	const struct hdlc_receive_health *health = &m->packer.hdlc.receive_health;
+	if (!health->present || health->numbered || m->count < health->quarantine ||
+	    health->latest < timing_sample || m->count < health->latest ||
+	    m->count - health->latest > MODEM_RATE / 10)
+		return false;
+
+	uint64_t rate = (uint64_t)m->tx_rate + m->rx_rate;
+	int elapsed_bits = lapm_timer_timeout(l) - m->bit_timer;
+	return rate && elapsed_bits >= 0 &&
+		(uint64_t)elapsed_bits * MODEM_RATE >=
+		rate * (round_trip_samples + MODEM_RATE / 2);
 }
 
 bool modem_ec_get_tx_recovery(const struct modem *m,

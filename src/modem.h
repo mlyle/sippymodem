@@ -622,6 +622,9 @@ extern void modem_ec_stop(struct modem *m);
 extern const char *modem_ec_protocol_step(const struct modem *m);
 /* Whether the host still accepts LAPM establishment for this call. */
 extern bool modem_ec_can_establish(const struct modem *m);
+/* A pending XID has waited for a reply on a recently verified idle carrier. */
+extern bool modem_ec_xid_recovery_ready(const struct modem *m,
+	uint64_t timing_sample, uint16_t round_trip_samples);
 /* Read-only facts on the owner's 8 kHz media clock. No timer or allowance
  * changes: optional physical recovery must retain normal LAPM supervision. */
 struct modem_tx_recovery {

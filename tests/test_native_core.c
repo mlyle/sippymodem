@@ -9479,6 +9479,31 @@ static bool test_lapm_establishment_recovery(void)
 			      "establishment recovery changed negotiation: xid %u expiry %u retries %d calls %u state %u session %u",
 			      xid, expiry, l->rtx_count, retrain_dp.retrain_calls, m->state,
 			      lapm_v44_sessions_equal(&l->v44_session, &session));
+			if (xid && expiry == 4) {
+				const uint16_t round_trip = 960;
+				const int reply_bits = (round_trip + MODEM_RATE / 2) * 9600 / MODEM_RATE;
+				uint64_t observed_timing = m->count;
+				int original_timer = m->bit_timer;
+				uint8_t flag = 0x7e;
+
+				CHECK(!modem_ec_xid_recovery_ready(m, observed_timing, round_trip),
+				      "XID retry started a repair immediately");
+				for (unsigned i = 0; i < 10; ++i)
+					CHECK(modem_hdlc_put_bits(m, 8, &flag, 1) == 1,
+					      "XID idle observation failed");
+				m->bit_timer = original_timer - reply_bits + 1;
+				CHECK(!modem_ec_xid_recovery_ready(m, observed_timing, round_trip),
+				      "fresh flags bypassed the XID reply guard");
+				--m->bit_timer;
+				CHECK(modem_ec_xid_recovery_ready(m, observed_timing, round_trip),
+				      "unanswered XID with fresh flags could not recover");
+				CHECK(!modem_ec_xid_recovery_ready(m, observed_timing + 1, round_trip),
+				      "flags preceding the timing change qualified");
+				modem_hdlc_receive_gap(m, m->count + MODEM_FRAG);
+				CHECK(!modem_ec_xid_recovery_ready(m, observed_timing, round_trip),
+				      "missing receive samples qualified as XID idle");
+				m->bit_timer = original_timer;
+			}
 			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
 				m->packer.hdlc.tx_complete(l, outgoing);
 		}
