@@ -67,8 +67,8 @@ and the macOS and Windows build paths.
 ## Performance
 
 The October 4 baseline measured steady V.34 at about **2.9 ms per 20 ms packet**
-on a Ryzen 7 5825U and **7.5 ms** on a Pi 5. The November 21 release rehearsal
-passed seven mixed modem-to-SSH calls on Pi 5 at **37% peak whole-host CPU**.
+on a Ryzen 7 5825U and **7.5 ms** on a Pi 5. The November 22 release rehearsal
+passed seven mixed modem-to-SSH calls on Pi 5 at **35% peak whole-host CPU**.
 The [performance guide](docs/performance.md) gives the call mix, memory figures,
 and packet timing.
 

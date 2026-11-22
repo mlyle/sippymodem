@@ -138,6 +138,11 @@ receive completes. Check that the sender also exits successfully and the
 receiver's file matches. The PTY close should give queued acknowledgments
 time to leave before hangup.
 
+For ZMODEM, check that the receiver finishes after the sender's final
+`OO`. The Linux `sz` tested with the preview flushes the tty on exit,
+which can discard those bytes before the modem reads them. In a test harness,
+run `sz` on a socket pair and relay to the PTY until its output is drained.
+
 ### Two modems on one ATA
 
 Use one owner-only campaign configuration per FXS port, with distinct
