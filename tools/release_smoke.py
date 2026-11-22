@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-3-Clause
-"""Check the CLI and shared SDK in an extracted Linux binary release."""
+"""Check the CLI and shared SDK in an installed or extracted release."""
 
 import argparse
 import json
@@ -50,8 +50,10 @@ def check_cli(package: Path, work: Path) -> None:
 
 def check_sdk(package: Path, work: Path) -> None:
     environment = dict(os.environ, PKG_CONFIG_LIBDIR=str(package / "lib/pkgconfig"),
-                       PKG_CONFIG_PATH="", LD_LIBRARY_PATH=str(package / "lib"))
-    environment.pop("PKG_CONFIG_SYSROOT_DIR", None)
+                       PKG_CONFIG_PATH="")
+    for name in ("PKG_CONFIG_SYSROOT_DIR", "LD_LIBRARY_PATH",
+                 "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"):
+        environment.pop(name, None)
     flags = subprocess.check_output(
         ["pkg-config", "--cflags", "--libs", "sippymodem"],
         cwd=work, env=environment, text=True, timeout=10)
@@ -60,6 +62,7 @@ def check_sdk(package: Path, work: Path) -> None:
         "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-DSIPPYMODEM_INSTALLED_TEST",
         "-Wall", "-Wextra", "-Werror", str(ROOT / "tests/test_library_wait.c"),
         "-o", str(executable), *shlex.split(flags),
+        "-Xlinker", "-rpath", "-Xlinker", str(package / "lib"),
     ], cwd=work, env=environment, check=True, timeout=30)
     subprocess.run([executable], cwd=work, env=environment, check=True, timeout=30)
     print("installed SDK exchanged literal bytes over SIP", flush=True)
@@ -67,7 +70,7 @@ def check_sdk(package: Path, work: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("package", type=Path, help="extracted Linux binary directory")
+    parser.add_argument("package", type=Path, help="directory containing bin/, lib/ and include/")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="sippymodem-smoke-") as directory:
         work = Path(directory)

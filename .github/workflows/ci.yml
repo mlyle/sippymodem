@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      full_suite:
+        description: Run the full native regression suite
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: Build and check the staged install
+        run: |
+          make -j "$(nproc)" install PJSIP_PROVIDER=submodule RELOCATABLE_SDK=1 \
+            DESTDIR="$RUNNER_TEMP/sippymodem-ci"
+          python3 tools/release_smoke.py "$RUNNER_TEMP/sippymodem-ci/usr/local"
+      - name: Check build rules, framing and RTP
+        run: |
+          python3 -m unittest discover -s tests -p test_build_dependencies.py
+          make -C tests -j "$(nproc)" run-test-test_modem_pack run-test-test_rtp
+      - name: Run the full regression suite
+        if: github.event_name == 'workflow_dispatch' && inputs.full_suite
+        run: make -j "$(nproc)" test TEST_JOBS="$(nproc)" PJSIP_PROVIDER=submodule

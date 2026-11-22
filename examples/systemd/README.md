@@ -4,16 +4,22 @@ This template supervises one foreground `slmodemd` per instance. It leaves call
 handling to the PTY client. For a native server with huntgroups, supervise the
 embedding application instead; the library does not create a daemon or a PTY.
 
-Install sippymodem first. The template assumes `PREFIX=/usr/local`; adjust
-`ExecStart` if the executable lives elsewhere. Run these setup commands from
-this example directory, either in the source checkout or under the
-installation's `share/sippymodem/examples/systemd`:
+Install sippymodem first. The Debian package installs the template with the
+correct executable path. For an installation from source, the example
+assumes `PREFIX=/usr/local`. Adjust `ExecStart` if the executable lives
+elsewhere. Run these setup commands from this example directory, either in
+the source checkout or under `share/sippymodem/examples/systemd`:
 
 ```sh
 sudo useradd --system --create-home --home-dir /var/lib/sippymodem \
   --shell /usr/sbin/nologin sippymodem
 sudo install -d -m 700 /etc/sippymodem
 sudo install -m 600 default.env.example /etc/sippymodem/default.env
+```
+
+For an installation from source or a tarball, install the template as well.
+
+```sh
 sudo install -m 644 sippymodem@.service /etc/systemd/system/
 ```
 

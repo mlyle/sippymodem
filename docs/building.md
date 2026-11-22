@@ -100,22 +100,41 @@ release promise. Recompile consumers against the installed headers when
 updating the library. The SDK package version comes from `build/version`.
 `AT+GMR` reports the inherited modem compatibility version.
 
-## Build a Linux release
+## CI and releases
 
-From a checkout with the pinned PJSIP submodule initialized, run:
+Pushes to `master` and pull requests build on Linux and check the staged
+install over loopback. Run **CI** manually with **Run the full native
+regression suite** selected to include `make test`.
+
+The **Release** workflow builds portable tarballs for Linux x86-64, Linux
+ARM64 and Apple Silicon macOS. The two Linux builds also produce Debian
+packages. Each job tests the extracted packages. Pushing a tag that matches
+`v` plus the version in `build/version` publishes the verified assets to
+GitHub Releases. Run the workflow manually to download trial artifacts from
+the run. Linux release builds use Debian 12. The macOS archive uses the
+Apple Silicon runner's system libraries and has no distribution signature
+or notarization.
+
+To build locally, initialize the pinned PJSIP submodule and run this on the
+target architecture with Python 3.12 or later:
 
 ```sh
-python3 tools/release.py --revision HEAD
+python3 tools/release.py --revision HEAD --check
 ```
 
-Use a commit or tag that contains the release tooling and version. The command
-uses a fresh export of that revision and the pinned submodule, then stages
-`make install`. It writes a Linux binary tarball, its matching source tarball,
-and `SHA256SUMS` under `.build/release/`. Run it on the Linux architecture
-you intend to ship.
+The command exports the selected commit and its pinned PJSIP revision, then
+stages `make install`. It writes the portable tarball, the matching
+platform-named source tarball, and `SHA256SUMS` under `.build/release/`.
+On Linux, install `dpkg-dev` and
+add `--deb` to package that same build for system-wide installation.
 
-Verify the checksums, extract the binary tarball, then run this from the
-matching source checkout or source archive:
+Install a Debian package with `sudo apt install ./sippymodem_VERSION_ARCH.deb`.
+It installs `slmodemd` under `/usr/bin` and a systemd template that remains
+disabled until you set up an account and an instance configuration. See
+[the systemd example](../examples/systemd/README.md) for those steps.
+
+To repeat the smoke check, verify the checksums, extract the binary tarball,
+then run this from the matching source checkout or source archive:
 
 ```sh
 python3 tools/release_smoke.py /path/to/extracted-binary

@@ -1,6 +1,6 @@
 # Start using sippymodem
 
-The Linux binary archive contains a single-line SIP modem, `bin/slmodemd`,
+The binary archive contains a single-line SIP modem, `bin/slmodemd`,
 and the native SDK. Extract it and run it from the extracted directory.
 Install C-Kermit if you want to dial from a terminal.
 
@@ -36,9 +36,8 @@ report.
 ## Link an SDK client
 
 ```sh
-export PKG_CONFIG_PATH="$PWD/lib/pkgconfig"
-cc app.c -o app -I"$PWD/include" -L"$PWD/lib" -lsippymodem
-LD_LIBRARY_PATH="$PWD/lib" ./app
+cc app.c -o app -I"$PWD/include" -L"$PWD/lib" -lsippymodem -Wl,-rpath,"$PWD/lib"
+./app
 ```
 
 See the source archive's library guide for call control and multiple lines.

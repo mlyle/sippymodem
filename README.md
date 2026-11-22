@@ -33,9 +33,10 @@ V.91 interoperability has been verified with software peers.
 
 ## Install and make a call
 
-On Linux, extract the binary release and start `./bin/slmodemd` with your SIP
-settings. To build from a Git checkout with GNU Make, a C toolchain, Python,
-and pkg-config:
+Extract a portable release on Linux or Apple Silicon and start
+`./bin/slmodemd` with your SIP settings. On Debian, install the matching
+`.deb` for a system-wide deployment. To build from a Git checkout with GNU
+Make, a C toolchain, Python, and pkg-config:
 
 ```sh
 make pjproject-init
