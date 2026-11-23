@@ -429,22 +429,25 @@ static int detector_ec_required(const struct modem *m)
 
 static void detector_finish(struct modem *m)
 {
+	struct detect_state *d = &m->packer.detector;
 	struct bits_state transmit_tail = m->pack;
 	struct bits_state receive_tail = m->unpack;
-	u8 residue_pattern[2] = {
-		m->packer.detector.rx_pattern[0],
-		m->packer.detector.rx_pattern[1],
-	};
+	u8 residue_pattern[2] = { d->rx_pattern[0], d->rx_pattern[1] };
 	/* One received pair can precede a late ODP at the T400 boundary.
 	 * It arms the residue filter; four characters still select V.42. */
-	int discard_residue = !m->packer.detector.ec_enable &&
-		m->packer.detector.rx_count >= 2;
-	u8 text[sizeof(m->packer.detector.text.bytes)];
-	unsigned int text_length = m->packer.detector.text.confirmed ?
-		m->packer.detector.text.length : 0;
+	bool discard_residue = !d->ec_enable && d->rx_count >= 2;
+	u8 text[V42_RAW_GRACE_BYTES];
+	unsigned int text_length = 0;
+	unsigned int residue_start = 0;
 
-	if (text_length != 0)
-		memcpy(text, m->packer.detector.text.bytes, text_length);
+	if (!d->ec_enable && d->text.confirmed) {
+		text_length = d->grace.active ? d->grace.length : d->text.length;
+		memcpy(text, d->grace.active ? d->grace.bytes : d->text.bytes, text_length);
+		residue_start = text_length;
+		if (discard_residue && d->grace.active)
+			residue_start = d->rx_count == DETECTOR_MATCH_CHARACTERS ?
+				d->grace.residue_start : text_length - (unsigned int)d->rx_count;
+	}
 
 	PACK_DBG("detector finished.\n");
 	m->packer.detector.tx_count = 0;
@@ -472,9 +475,10 @@ static void detector_finish(struct modem *m)
 			m->packer.async.detection_residue_state =
 				ASYNC_DETECTION_RESIDUE_WAIT;
 		}
-		if (text_length != 0)
-			for (unsigned int i = 0; i < text_length; ++i)
-				async_deliver_character(m, text[i]);
+		for (unsigned int i = 0; i < residue_start; ++i)
+			async_deliver_character(m, text[i]);
+		for (unsigned int i = residue_start; i < text_length; ++i)
+			async_receive_character(m, text[i]);
 		if (discard_residue || text_length != 0) {
 			/* The detector has consumed every complete character. Seed
 			 * the raw receiver with its partial next character so a
@@ -589,14 +593,47 @@ static int detector_observe_text(struct modem *m, u8 character)
 
 	/* Detection patterns use the opposite bit order to DTE characters. */
 	REVERSE_BITS(character);
+	if (d->grace.active) {
+		if (d->grace.length == sizeof(d->grace.bytes))
+			return -1;
+		d->grace.bytes[d->grace.length++] = character;
+		return 0;
+	}
 	if (raw_text_observe(&d->text, character) != 0)
 		return -1;
 	if (!confirmed && d->text.confirmed) {
 		d->rx_count = 0;
-		if (m->caller)
+		if (m->cfg.ec && m->dsp_info.v8_lapm && m->bit_timer_func == detector_timeout) {
+			/* A peer that offered LAPM can start its reply just after text. */
+			d->grace.active = true;
+			d->grace.length = d->text.length;
+			memcpy(d->grace.bytes, d->text.bytes, d->text.length);
+			m->bit_timer = (int)(detector_rate(m) * V42_RAW_GRACE_MS / 1000);
+		} else if (m->caller) {
 			detector_timeout(m);
+		}
 	}
 	return 0;
+}
+
+static bool detector_accept_unmarked_adp(struct detect_state *d, u8 character, bool marked)
+{
+	/* Some peers emit their entire V.42 ADP as contiguous 8N1. Only
+	 * accept this form after idle marks and a full minimum answer run. */
+	unsigned int count = d->grace.unmarked_adp_chars;
+
+	if (marked)
+		count = character == ADP0 ? 1u : 0u;
+	else if (count != 0 && character == ((count & 1u) ? ADP1_V42 : ADP0))
+		count++;
+	else
+		count = 0;
+	d->grace.unmarked_adp_chars = count;
+	if (count < 2u * V42_MINIMUM_ANSWER_PATTERNS)
+		return false;
+	d->rx_pattern[1] = ADP1_V42;
+	d->rx_count = DETECTOR_MATCH_CHARACTERS;
+	return true;
 }
 
 int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
@@ -650,7 +687,7 @@ int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 		/* A reply that begins while the final ODP drains still belongs
 		 * to detection. Allow at most two received pattern intervals
 		 * to complete it; the timer callback prevents repeated renewal. */
-		if (m->caller && !d->text.confirmed &&
+		if (m->caller && (!d->text.confirmed || d->grace.active) &&
 		    d->rx_count > 0 && d->rx_count < DETECTOR_MATCH_CHARACTERS) {
 			uint64_t receive_rate = m->rx_rate ? m->rx_rate :
 				DETECTOR_FALLBACK_RATE / 2;
@@ -673,6 +710,7 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 	struct bits_state *s = &m->unpack;
 	struct detect_state *d = &m->packer.detector;
 	const bool allow_raw_fallback = !detector_ec_required(m);
+	const u32 adp_marks = (1u << (1 + V42_DETECTION_MIN_MARK_BITS)) - 1u;
 	int ret = 0;
 	int finish = 0;
 	u8 ch;
@@ -686,7 +724,8 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 		 * Require adjacent flags and inspect every newly received bit end. */
 		for (int bit = nbits - 1; bit >= 0; --bit) {
 			if (((s->data >> bit) & 0xffffu) != 0x7e7eu ||
-			    d->ec_enable || d->text.confirmed ||
+			    d->ec_enable ||
+			    (d->text.confirmed && (!d->grace.active || d->grace.residue_start != 0)) ||
 			    (!m->caller && d->tx_count != 0))
 				continue;
 			if (!m->caller)
@@ -708,18 +747,28 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 					d->text = (struct raw_text_probe){0};
 				if (d->rx_count < DETECTOR_MATCH_CHARACTERS)
 					d->rx_count = 0;
+				d->grace.unmarked_adp_chars = 0;
 				continue;
 			}
 			PACK_DBG("rx pattern: 0x%02x.\n",ch);
-			if (allow_raw_fallback && !d->ec_enable && !finish &&
+			if (allow_raw_fallback && !d->ec_enable && (!finish || d->grace.active) &&
 			    (m->caller || d->tx_count == 0) &&
 			    detector_observe_text(m, ch) != 0) {
+				modem_note_disconnect(m, true, "raw V.42 fallback buffer overflow");
 				modem_update_status(m, STATUS_ERROR);
 				return ret;
 			}
-			if (d->text.confirmed)
+			if ((d->text.confirmed && !d->grace.active) || finish)
 				continue;
-			if (!detector_accept_pattern_character(m, d, ch))
+			bool unmarked_adp = false;
+			if (d->grace.active && d->rx_count < DETECTOR_MATCH_CHARACTERS) {
+				/* Require wire marks for ordinary short matches. */
+				bool marked = ((s->data >> (s->bit + ASYNC_FRAME_BITS)) & adp_marks) == adp_marks;
+				if (!marked)
+					d->rx_count = 0;
+				unmarked_adp = m->caller && detector_accept_unmarked_adp(d, ch, marked);
+			}
+			if (!unmarked_adp && !detector_accept_pattern_character(m, d, ch))
 				continue;
 
 			if (!m->caller) {
@@ -729,13 +778,15 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 				d->ec_enable = d->rx_pattern[1] == ADP1_V42;
 				if (d->ec_enable)
 					m->cfg.ec = 1;
+				else if (d->grace.active)
+					d->grace.residue_start = d->grace.length - DETECTOR_MATCH_CHARACTERS;
 				finish = 1;
 			}
 		}
 	}
 	/* An answerer's text fallback must wait until this input group is
 	 * consumed before replacing the detector union with async framing. */
-	if (finish || (!m->caller && d->text.confirmed)) {
+	if (finish || (!m->caller && d->text.confirmed && !d->grace.active)) {
 		if (m->caller && !d->ec_enable)
 			detector_timeout(m);
 		else
@@ -755,6 +806,10 @@ void modem_detector_start(struct modem *m)
 	d->tx_limit = m->caller ? 0 : 2 * V42_ANSWER_REPLY_PATTERNS;
 	d->ec_enable = 0;
 	d->text = (struct raw_text_probe){0};
+	d->grace.active = false;
+	d->grace.length = 0;
+	d->grace.residue_start = 0;
+	d->grace.unmarked_adp_chars = 0;
 	if (m->caller) {
 		detector_set_pattern(d->tx_pattern, ODP0, ODP1);
 		detector_set_pattern(d->rx_pattern, ADP0, ADP1_V42);
@@ -784,7 +839,9 @@ static void modem_detector_reset_receive(struct modem *m)
 {
 	/* Retraining interrupts adjacency and physical bit alignment, not the
 	 * selected reply or the suspended detection timer (V.42 7.10/7.11). */
-	m->packer.detector.rx_count = 0;
+	if (!m->packer.detector.grace.active || m->packer.detector.grace.residue_start == 0)
+		m->packer.detector.rx_count = 0;
+	m->packer.detector.grace.unmarked_adp_chars = 0;
 	if (!m->packer.detector.text.confirmed)
 		m->packer.detector.text = (struct raw_text_probe){0};
 	m->unpack = (struct bits_state){ .data = 0xffffu };

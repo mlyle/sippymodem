@@ -205,6 +205,7 @@ extern int  modem_comp_flush_decoder(struct modem *m, char *buf, int n);
 enum {
 	V42_DETECTION_PATTERN_BITS = 36,
 	/* V.42 7.2.1 permits 8 to 16 marks after each 10-bit character. */
+	V42_DETECTION_MIN_MARK_BITS = 8,
 	V42_DETECTION_MAX_MARK_BITS = 16,
 	V42_DETECTION_MAX_PATTERN_BITS = 2 * (10 + V42_DETECTION_MAX_MARK_BITS),
 	V42_ORIGINATOR_MATCH_PATTERNS = 2,
@@ -212,6 +213,10 @@ enum {
 	/* A longer bounded reply gives a damaged pattern room to recover. */
 	V42_ANSWER_REPLY_PATTERNS = 16,
 	V42_PROTOCOL_PREAMBLE_FLAGS = 16,
+	V42_RAW_GRACE_MS = 600,
+	/* Allow the entire duplex bit budget to arrive on RX, plus the held
+	 * prompt and drain at the next media fragment. */
+	V42_RAW_GRACE_BYTES = 2 * MODEM_MAX_RATE * V42_RAW_GRACE_MS / (1000 * 10) + 256,
 };
 
 typedef struct hdlc_frame {
@@ -452,6 +457,14 @@ struct modem {
 			int ec_enable;
 			/* Hold a short text prefix until raw mode is unambiguous. */
 			struct raw_text_probe text;
+			struct {
+				u8 bytes[V42_RAW_GRACE_BYTES];
+				unsigned int length;
+				/* Offset of a confirmed V.14 reply, zero until seen. */
+				unsigned int residue_start;
+				unsigned int unmarked_adp_chars;
+				bool active;
+			} grace;
 		} detector;
 		struct hdlc_state {
 			struct hdlc_frame *tx_frame;

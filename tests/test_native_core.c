@@ -12357,6 +12357,139 @@ static bool test_v42_raw_text_detection(void)
 	return true;
 }
 
+static bool clock_v42_exchange(struct modem *modem, uint8_t *bits, size_t count)
+{
+	for (size_t i = 0; i < count; ++i) {
+		uint8_t output;
+
+		CHECK(modem_put_bits(modem, 1, &bits[i], 1) == 1 &&
+		      modem_get_bits(modem, 1, &output, 1) == 1,
+		      "V.42 grace media stopped at bit %zu", i);
+	}
+	return true;
+}
+
+static bool test_v42_optional_raw_grace(void)
+{
+	enum { RATE = 9600, GRACE_BITS = 2 * RATE * 600 / 1000 };
+	enum { CALLER_RAW, ANSWERER_RAW, MARKED_LAPM, MARKED_V14, UNMARKED_LAPM };
+	static const uint8_t prompt[] = "READY\r";
+	static const uint8_t unmarked[] = "ECECECECECECECECECEC";
+	static const uint8_t raw_after_adp = '!';
+	uint8_t expected[260];
+	uint8_t bits[GRACE_BITS / 2 + 80];
+
+	memset(expected, 'x', sizeof(expected));
+	memcpy(expected, prompt, sizeof(prompt) - 1);
+	memcpy(expected + sizeof(prompt) - 1, "ECEC", 4);
+	for (unsigned scenario = CALLER_RAW; scenario <= UNMARKED_LAPM; ++scenario) {
+		struct lapm_stream_sink sink = { 0 };
+		struct dp datapump = { .id = DP_V34 };
+		struct modem source = { .get_chars = scripted_lapm_source };
+		struct modem modem = {
+			.name = "optional V.42 grace",
+			.dp = &datapump, .tx_rate = RATE, .rx_rate = RATE,
+			.caller = scenario != ANSWERER_RAW,
+			.cfg = { .ec = 1, .ec_detector = 1 },
+			.dsp_info = { .v8_lapm = true },
+			.sregs = { [SREG_EC] = 1, [SREG_QUIET] = 1 },
+			.data_output = capture_lapm_stream, .data_output_context = &sink,
+		};
+		size_t length = sizeof(expected) * 10;
+		size_t prompt_bits = (sizeof(prompt) - 1) * 10;
+
+		datapump.modem = &modem;
+		CHECK(modem_ec_init(&modem) == 0, "V.42 grace LAPM init failed");
+		modem_dp_connected(&modem);
+		lapm_source.data = expected;
+		lapm_source.length = sizeof(expected);
+		lapm_source.offset = 0;
+		modem_async_start(&source);
+		CHECK(modem_async_get_bits(&source, 1, bits, (int)length) == (int)length,
+		      "V.42 grace raw fixture did not send");
+		CHECK(modem_put_bits(&modem, 1, bits, (int)prompt_bits) == (int)prompt_bits &&
+		      modem.bit_timer == GRACE_BITS && sink.count == 0,
+		      "role %d did not arm 600 ms of optional V.42 detection", modem.caller);
+		if (scenario == CALLER_RAW || scenario == ANSWERER_RAW) {
+			uint8_t last_character[10];
+			size_t last_start = prompt_bits + GRACE_BITS / 2 - 3;
+			uint8_t output;
+
+			/* A short literal ECEC after idle marks still belongs to raw. */
+			memmove(bits + prompt_bits + 16, bits + prompt_bits, length - prompt_bits);
+			memset(bits + prompt_bits, 1, 16);
+			length += 16;
+			memcpy(last_character, bits + length - sizeof(last_character), sizeof(last_character));
+			memset(bits + length - sizeof(last_character), 1,
+			       sizeof(bits) - length + sizeof(last_character));
+			memcpy(bits + last_start, last_character, sizeof(last_character));
+			CHECK(clock_v42_exchange(&modem, bits + prompt_bits, GRACE_BITS / 2 - 1) &&
+			      modem.bit_timer == 2 && modem.put_bits == modem_detector_put_bits &&
+			      sink.count == 0,
+			      "role %d left detection early or exposed the buffered text", modem.caller);
+			CHECK(clock_v42_exchange(&modem, bits + last_start + 2, 1),
+			      "V.42 grace did not reach its deadline");
+			for (unsigned drain = 0; drain < 80 && modem.put_bits == modem_detector_put_bits; ++drain)
+				CHECK(modem_get_bits(&modem, 1, &output, 1) == 1,
+				      "V.42 grace did not drain the last ODP");
+			CHECK(clock_v42_exchange(&modem, last_character + 3, sizeof(last_character) - 3) &&
+			      modem.put_bits == modem_async_put_bits && !modem.cfg.ec &&
+			      sink.count == sizeof(expected) &&
+			      memcmp(sink.bytes, expected, sizeof(expected)) == 0,
+			      "role %d lost, duplicated, or misclassified raw data", modem.caller);
+		} else {
+			struct modem peer = { .name = "late ADP" };
+			bool lapm = scenario != MARKED_V14;
+
+			memset(bits, 1, sizeof(bits));
+			CHECK(clock_v42_exchange(&modem, bits, RATE / 2) &&
+			      modem.bit_timer == GRACE_BITS - RATE,
+			      "V.42 grace did not stay open for 500 ms");
+			if (scenario == UNMARKED_LAPM) {
+				size_t reply_bits = (sizeof(unmarked) - 1) * 10;
+
+				lapm_source.data = unmarked;
+				lapm_source.length = sizeof(unmarked) - 1;
+				lapm_source.offset = 0;
+				CHECK(modem_async_get_bits(&source, 1, bits, (int)reply_bits) == (int)reply_bits &&
+				      clock_v42_exchange(&modem, bits, reply_bits - 10) &&
+				      modem.put_bits == modem_detector_put_bits &&
+				      clock_v42_exchange(&modem, bits + reply_bits - 10, 10),
+				      "unmarked ADP did not require the minimum answer run");
+			} else if (lapm) {
+				peer.packer.detector.tx_count = 1;
+				peer.packer.detector.tx_pattern[0] = 0xa2;
+				peer.packer.detector.tx_pattern[1] = 0xc2;
+				CHECK(modem_detector_get_bits(&peer, 1, bits, 160) == 160 &&
+				      clock_v42_exchange(&modem, bits, 160), "late ADP transfer failed");
+			} else {
+				int reply_bits = 3 * V42_DETECTION_PATTERN_BITS + 9;
+				uint8_t output;
+
+				peer.packer.detector.tx_count = 1;
+				peer.packer.detector.tx_pattern[0] = 0xa2;
+				lapm_source.data = &raw_after_adp;
+				lapm_source.length = 1;
+				lapm_source.offset = 0;
+				CHECK(modem_detector_get_bits(&peer, 1, bits, reply_bits) == reply_bits &&
+				      modem_async_get_bits(&source, 1, bits + reply_bits, 10) == 10 &&
+				      modem_put_bits(&modem, 1, bits, reply_bits + 10) == reply_bits + 10,
+				      "could not receive V.14 reply and first raw byte together");
+				for (unsigned drain = 0; drain < 80 && modem.put_bits == modem_detector_put_bits; ++drain)
+					CHECK(modem_get_bits(&modem, 1, &output, 1) == 1, "V.14 final ODP stalled");
+			}
+			CHECK(lapm ? (modem.put_bits == modem_hdlc_put_bits && sink.count == 0) :
+			      (modem.put_bits == modem_async_put_bits && sink.count == sizeof(prompt) &&
+			       memcmp(sink.bytes, prompt, sizeof(prompt) - 1) == 0 &&
+			       sink.bytes[sizeof(prompt) - 1] == raw_after_adp),
+			      "late %s ADP did not select framing and isolate the raw prompt", lapm ? "V.42" : "V.14");
+		}
+		modem_ec_exit(&modem);
+	}
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	return true;
+}
+
 enum partial_adp_reply {
 	PARTIAL_ADP_RAW,
 	PARTIAL_ADP_LAPM,
@@ -12611,6 +12744,7 @@ int main(void)
 		{ "V.42 late protocol after retrain", test_v42_late_protocol_after_retrain },
 		{ "V.42 late originator detection", test_v42_late_originator_detection },
 		{ "V.42 early raw text", test_v42_raw_text_detection },
+		{ "V.42 optional detection gives late LAPM 600 ms", test_v42_optional_raw_grace },
 		{ "LAPM peer raw fallback", test_lapm_raw_text_fallback },
 	};
 	unsigned int failures = 0;

@@ -314,13 +314,15 @@ select separate MNP implementations: the implemented error-control protocol
 is V.42 LAPM. Both negotiated directions must run at least 1200 bit/s.
 Bell 103, V.21, V.23, Baudot, and V.22 at 600 bit/s use their raw paths.
 
-When seeking error control, detection allows up to 7.5 seconds of active
+When seeking error control, initial detection allows up to 7.5 seconds of active
 media for a delayed V.42 request, reply, or protocol flags over SIP. Physical
 retraining pauses this budget. This is a compatibility extension to the
 standard's 750-ms default. An explicit `\N0` answer retains 750 ms; valid
 negotiation completes early, and missing replies still cause bounded fallback
-or disconnection according to the selected policy. Convincing raw text also
-ends detection early; its bytes and any partial next character are preserved.
+or disconnection according to the selected policy. With optional LAPM,
+convincing raw text selects raw framing. When V.8 advertised LAPM, the modem
+first gives the V.42 reply 600 ms of active media to arrive. Raw fallback
+preserves the buffered text and any partial next character.
 
 The compression type field is a mask: `0` none, `1` V.42bis, `2` V.44,
 `3` both. Omitting it from `+DS` retains the prior mask. Compression requires
