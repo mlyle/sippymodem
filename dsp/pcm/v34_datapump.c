@@ -144,6 +144,10 @@ static const char *progress_v34(const struct dp *dp)
 	case V34_CALL_PHASE4:
 		if (call->state.phase4.online_announced)
 			return "data/V.34";
+		if (call->state.phase4.locally_initiated)
+			return call->state.phase4.receive.stage == V34_PHASE34_RECEIVER_DATA &&
+				!call->state.phase4.receive_data_active ?
+				"rate-downshift/wait-S-Sbar" : "rate-downshift/MP-E-B1";
 		if (call->state.phase4.data_preparation_active) {
 			switch (call->data_preparation.stage) {
 			case V34_DATA_PREPARATION_TRANSMIT_MAPPING:
@@ -398,16 +402,21 @@ static int delete_v34(struct dp *dp)
 	return 0;
 }
 
-static int start_local_retrain(struct v34_datapump *datapump)
+static int start_local_recovery(struct v34_datapump *datapump, bool prefer_downshift)
 {
 	struct training_session training;
 	struct v34_call call;
+	enum v34_call_result result;
 
 	if (!training_session_is_online(&datapump->training))
 		return -1;
 	training = datapump->training;
 	call = datapump->call;
-	if (v34_call_start_retrain(&call) != V34_CALL_OK ||
+	result = prefer_downshift ? v34_call_downshift_receive(&call) :
+		v34_call_start_retrain(&call);
+	if (result == V34_CALL_NO_COMMON_RATE)
+		result = v34_call_start_retrain(&call);
+	if (result != V34_CALL_OK ||
 	    training_session_start_retrain(
 		    &training, TRAINING_LOCAL_RETRAIN) !=
 		    TRAINING_SESSION_OK)
@@ -432,7 +441,7 @@ static int retrain_v34(struct dp *dp)
 	 * the modem wrapper will report CONNECT when this generation completes. */
 	if (training_session_is_retraining(&datapump->training))
 		return 0;
-	return start_local_retrain(datapump);
+	return start_local_recovery(datapump, false);
 }
 
 static int hangup_v34(struct dp *dp)
@@ -549,7 +558,7 @@ static bool observe_online_quality(struct v34_datapump *datapump)
 		    V34_PHASE34_RECEIVER_OK)
 			return false;
 	} else if (result == V34_DATA_QUALITY_RETRAIN) {
-		if (start_local_retrain(datapump) != 0)
+		if (start_local_recovery(datapump, true) != 0)
 			return false;
 	} else if (result != V34_DATA_QUALITY_OK) {
 		return false;

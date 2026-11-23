@@ -110,8 +110,9 @@ struct v34_phase4_exchange {
 	bool transmit_b1_complete;
 	bool receive_b1_complete;
 	bool online_announced;
-	/* This exchange started at an online S/S-bar, not at Phase 3 J. */
+	/* This exchange started in data mode and reuses the trained line. */
 	bool rate_renegotiation;
+	bool locally_initiated;
 	bool failed;
 };
 
@@ -125,6 +126,11 @@ bool v34_phase4_exchange_is_valid(
 	const struct v34_phase4_exchange *exchange);
 bool v34_phase4_exchange_has_failed(
 	const struct v34_phase4_exchange *exchange);
+
+/* Request the next lower common receive rate on the trained line. */
+enum v34_phase4_exchange_result v34_phase4_exchange_downshift_receive(
+	struct v34_phase4_exchange *exchange);
+
 bool v34_phase4_exchange_needs_data_preparation(
 	const struct v34_phase4_exchange *exchange);
 

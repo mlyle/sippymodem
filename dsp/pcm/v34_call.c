@@ -553,6 +553,15 @@ static enum v34_call_result phase4_result(
 	return V34_CALL_NUMERIC_FAILURE;
 }
 
+enum v34_call_result v34_call_downshift_receive(struct v34_call *call)
+{
+	if (!v34_call_is_valid(call))
+		return V34_CALL_INVALID_ARGUMENT;
+	if (!v34_call_is_online(call))
+		return V34_CALL_INVALID_STATE;
+	return phase4_result(v34_phase4_exchange_downshift_receive(&call->state.phase4));
+}
+
 static enum v34_call_result enter_phase3(struct v34_call *call)
 {
 	struct v34_phase3_profile local;
@@ -858,9 +867,8 @@ static bool peer_s_has_timed_out(
 	return false;
 }
 
-/* V.34 11.4.2: start after J-prime or S-bar has finished. Initial
- * callers allow two round trips; answerers allow three. The peer's INFO0
- * CME bit selects the extended deadline. Online responders retain 11.6.2.2. */
+/* V.34 11.4.2 and 11.6.2. Initial callers and online initiators allow
+ * two round trips; initial answerers and online responders allow three. */
 static bool phase4_e_has_timed_out(struct v34_call *call, uint32_t events)
 {
 	const struct v34_phase4_exchange *exchange = &call->state.phase4;
@@ -874,8 +882,9 @@ static bool phase4_e_has_timed_out(struct v34_call *call, uint32_t events)
 		bool cme = exchange->rate_renegotiation ?
 			(call->local_info0.cme_modem || call->peer_info0.cme_modem) :
 			call->peer_info0.cme_modem;
-		uint32_t round_trips = exchange->rate_renegotiation ||
-			call->local_role == V34_ANSWERING_STATION ? 3u : 2u;
+		bool responding = exchange->rate_renegotiation ? !exchange->locally_initiated :
+			call->local_role == V34_ANSWERING_STATION;
+		uint32_t round_trips = responding ? 3u : 2u;
 
 		call->phase4_e_remaining_samples = cme ?
 			30u * V34_PHASE2_SAMPLE_RATE :
@@ -1056,7 +1065,11 @@ enum v34_call_result v34_call_sample(
 		if (result == V34_CALL_SOURCE_FAILURE)
 			return result;
 		if (result != V34_CALL_OK &&
-		    phase4_receive_has_failed(&call->state.phase4))
+		    (phase4_receive_has_failed(&call->state.phase4) ||
+		     (call->state.phase4.rate_renegotiation &&
+		      !call->state.phase4.online_announced &&
+		      (result == V34_CALL_NO_COMMON_RATE ||
+		       result == V34_CALL_SEQUENCE_MISMATCH))))
 			retrain_requested = true;
 		/* Finish both B1 directions before recovery so the peer can observe
 		 * the complete retrain silence. Gross errors in this known all-one

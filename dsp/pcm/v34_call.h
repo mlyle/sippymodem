@@ -115,6 +115,9 @@ enum v34_call_result v34_call_init_from_phase2(
  * negotiated INFO0 capability records remain owned by the call. */
 enum v34_call_result v34_call_start_retrain(struct v34_call *call);
 
+/* Return NO_COMMON_RATE if the current receive rate cannot be lowered. */
+enum v34_call_result v34_call_downshift_receive(struct v34_call *call);
+
 /* Transfer the online line owners to the reciprocal MP-prime cleardown.
  * The outer modem lifecycle supplies the bounded peer-response deadline. */
 enum v34_call_result v34_call_start_cleardown(struct v34_call *call);

@@ -328,6 +328,7 @@ bool v34_phase4_exchange_is_valid(
 	    !v34_mp_record_is_valid(&exchange->transmit_mp) ||
 	    record_is_acknowledged(&exchange->transmit_mp) ||
 	    !transmitter_stage_is_valid(exchange) ||
+	    (exchange->locally_initiated && !exchange->rate_renegotiation) ||
 	    !receiver_feedback_matches_mp(exchange) ||
 	    !transmitter_mp_matches(exchange) || !data_state_is_valid(exchange))
 		return false;
@@ -877,6 +878,59 @@ static enum v34_phase4_exchange_result start_receive_data(
 	return V34_PHASE4_EXCHANGE_OK;
 }
 
+static enum v34_phase4_exchange_result begin_rate_renegotiation(
+	struct v34_phase4_exchange *exchange, const struct v34_mp_record *offer,
+	bool locally_initiated)
+{
+	struct v34_phase4_exchange next = {
+		.receive = exchange->receive,
+		.data_startup = exchange->data_startup,
+		.transmit_mp = *offer,
+		.mp_transition_symbols = V34_TRAINING_SEQUENCE_MIN_SYMBOLS,
+		.rate_renegotiation = true,
+		.locally_initiated = locally_initiated,
+	};
+
+	if (!exchange->online_announced ||
+	    v34_training_transmitter_resume_online(&next.transmit.training,
+		    &exchange->transmit.data.line) != V34_TRAINING_TRANSMITTER_OK ||
+	    !v34_phase4_exchange_is_valid(&next))
+		return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
+	*exchange = next;
+	return V34_PHASE4_EXCHANGE_OK;
+}
+
+enum v34_phase4_exchange_result v34_phase4_exchange_downshift_receive(
+	struct v34_phase4_exchange *exchange)
+{
+	if (!v34_phase4_exchange_is_online(exchange) || exchange->receive.data_erasure)
+		return V34_PHASE4_EXCHANGE_INVALID_STATE;
+
+	const struct v34_data_mode *mode = &exchange->data_startup.mode;
+	const struct v34_mp_parameters *peer =
+		v34_mp_record_common_parameters(&exchange->peer_mp);
+	struct v34_mp_record offer = exchange->transmit_mp;
+	struct v34_mp_parameters *parameters = v34_mp_record_common_parameters_mutable(&offer);
+	uint8_t lower = v34_mp_highest_enabled_rate(
+		parameters->data_rate_capability_mask & peer->data_rate_capability_mask,
+		mode->receive.primary_data_rate_2400_bps_units - 1u);
+
+	if (lower == 0u)
+		return V34_PHASE4_EXCHANGE_NO_COMMON_RATE;
+	if (local_role(exchange) == V34_CALLING_STATION) {
+		parameters->maximum_answer_to_call_rate_2400_bps_units = lower;
+		parameters->maximum_call_to_answer_rate_2400_bps_units =
+			mode->transmit.primary_data_rate_2400_bps_units;
+	} else {
+		parameters->maximum_call_to_answer_rate_2400_bps_units = lower;
+		parameters->maximum_answer_to_call_rate_2400_bps_units =
+			mode->transmit.primary_data_rate_2400_bps_units;
+	}
+	/* Start sending S now. The trained data receiver will detect the
+	 * peer's S/S-bar and switch to MP reception at that boundary. */
+	return begin_rate_renegotiation(exchange, &offer, true);
+}
+
 static enum v34_phase4_exchange_result drive_receiver(
 	struct v34_phase4_exchange *exchange, int16_t sample,
 	uint32_t *events, struct v34_received_mapping_frame *received)
@@ -887,26 +941,16 @@ static enum v34_phase4_exchange_result drive_receiver(
 			&exchange->receive, sample, &output);
 
 	switch (result) {
-	case V34_PHASE34_RECEIVER_RATE_RENEGOTIATION:
-		{
-			struct v34_phase4_exchange next = {
-				.receive = exchange->receive,
-				.data_startup = exchange->data_startup,
-				.transmit_mp = exchange->transmit_mp,
-				.mp_transition_symbols = V34_TRAINING_SEQUENCE_MIN_SYMBOLS,
-				.rate_renegotiation = true,
-			};
+	case V34_PHASE34_RECEIVER_RATE_RENEGOTIATION: {
+		enum v34_phase4_exchange_result begun;
 
-			if (!exchange->online_announced ||
-			    v34_training_transmitter_resume_online(&next.transmit.training,
-				    &exchange->transmit.data.line) !=
-				    V34_TRAINING_TRANSMITTER_OK ||
-			    !v34_phase4_exchange_is_valid(&next))
-				return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
-			*exchange = next;
-			*events = V34_PHASE4_EXCHANGE_EVENT_RATE_RENEGOTIATION;
+		if (exchange->locally_initiated && !exchange->online_announced)
 			return V34_PHASE4_EXCHANGE_OK;
-		}
+		begun = begin_rate_renegotiation(exchange, &exchange->transmit_mp, false);
+		if (begun == V34_PHASE4_EXCHANGE_OK)
+			*events = V34_PHASE4_EXCHANGE_EVENT_RATE_RENEGOTIATION;
+		return begun;
+	}
 	case V34_PHASE34_RECEIVER_OK:
 	case V34_PHASE34_RECEIVER_TIMING_ACQUIRED:
 	case V34_PHASE34_RECEIVER_TRN_COMPLETE:
@@ -928,6 +972,8 @@ static enum v34_phase4_exchange_result drive_receiver(
 	case V34_PHASE34_RECEIVER_E_COMPLETE:
 		return start_receive_data(exchange, events);
 	case V34_PHASE34_RECEIVER_MAPPING_FRAME_READY:
+		if (!exchange->receive_data_active)
+			return V34_PHASE4_EXCHANGE_OK;
 		*received = output.received;
 		*events |= V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED;
 		return V34_PHASE4_EXCHANGE_OK;

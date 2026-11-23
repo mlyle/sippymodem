@@ -3049,11 +3049,74 @@ static bool test_initial_e_timeout(void)
 	return true;
 }
 
+static bool test_local_downshift(void)
+{
+	for (unsigned int role = 0; role < 2u; ++role) {
+		struct endpoint caller = { .verify_mapping_frames = true };
+		struct endpoint answerer = { .verify_mapping_frames = true, .transmit_bit = 1u };
+		struct endpoint *initiator = role == V34_CALLING_STATION ? &caller : &answerer;
+		struct endpoint *responder = role == V34_CALLING_STATION ? &answerer : &caller;
+		struct channel channel = { .pcma = role == V34_ANSWERING_STATION };
+		struct v34_call_configuration call_config = configuration(V34_CALLING_STATION);
+		struct v34_call_configuration answer_config = configuration(V34_ANSWERING_STATION);
+
+		/* Leave a hole immediately below 9600 and floor recovery at 4800. */
+		call_config.phase4.transmit_mp.parameters.type0.data_rate_capability_mask = 0xau;
+		answer_config.phase4.transmit_mp.parameters.type0.data_rate_capability_mask = 0xau;
+		CHECK(v34_call_init(&caller.call, &call_config) == V34_CALL_OK &&
+		      v34_call_init(&answerer.call, &answer_config) == V34_CALL_OK &&
+		      run_initialized_pair(&caller, &answerer, &channel),
+		      "downshift fixture did not connect for role %u", role);
+		CHECK(initiator->call.state.phase4.data_startup.mode.receive
+			      .primary_data_rate_2400_bps_units == 4u &&
+		      initiator->call.state.phase4.data_startup.mode.transmit
+			      .primary_data_rate_2400_bps_units == 4u,
+		      "downshift fixture started at the wrong rate");
+		CHECK(v34_phase34_receiver_set_data_timing_frozen(
+			      &initiator->call.state.phase4.receive, true) == V34_PHASE34_RECEIVER_OK &&
+		      v34_call_downshift_receive(&initiator->call) == V34_CALL_OK &&
+		      !v34_call_is_online(&initiator->call),
+		      "local downshift was rejected");
+
+		bool resumed = false;
+		for (unsigned int sample = 0; sample < 8000u; ++sample) {
+			struct v34_call_observation c, a;
+
+			CHECK(channel_sample_pair(&channel, &caller, &answerer, &c, &a),
+			      "short exchange failed for role %u at sample %u", role, sample);
+			CHECK(c.next == V34_CALL_PHASE4 && a.next == V34_CALL_PHASE4,
+			      "short exchange started a full retrain for role %u at sample %u",
+			      role, sample);
+			if (v34_call_is_online(&caller.call) && v34_call_is_online(&answerer.call)) {
+				resumed = true;
+				break;
+			}
+		}
+		CHECK(resumed, "both directions did not complete the short exchange");
+		const struct v34_data_mode *local = &initiator->call.state.phase4.data_startup.mode;
+		const struct v34_data_mode *peer = &responder->call.state.phase4.data_startup.mode;
+		CHECK(local->receive.primary_data_rate_2400_bps_units == 2u &&
+		      local->transmit.primary_data_rate_2400_bps_units == 4u &&
+		      peer->receive.primary_data_rate_2400_bps_units == 4u &&
+		      peer->transmit.primary_data_rate_2400_bps_units == 2u,
+		      "short exchange did not lower just the requested direction");
+		CHECK(v34_call_downshift_receive(&initiator->call) == V34_CALL_NO_COMMON_RATE &&
+		      v34_call_is_online(&initiator->call),
+		      "downshift below the lowest common rate changed the call");
+		caller.mapping_frames_received = 0;
+		answerer.mapping_frames_received = 0;
+		CHECK(run_pair_until_frames(&caller, &answerer, &channel, 8u),
+		      "bidirectional data did not resume after a downshift");
+	}
+	return true;
+}
+
 static bool test_rate_renegotiation_timeout(void)
 {
-	for (unsigned int variant = 0; variant < 3u; ++variant) {
+	for (unsigned int variant = 0; variant < 4u; ++variant) {
 		bool calling_peer = variant == 1u;
 		bool cme = variant == 2u;
+		bool local_request = variant == 3u;
 		struct endpoint caller = { .verify_mapping_frames = true };
 		struct endpoint answerer = { .verify_mapping_frames = true, .transmit_bit = 1u };
 		struct endpoint *responder = calling_peer ? &answerer : &caller;
@@ -3072,23 +3135,30 @@ static bool test_rate_renegotiation_timeout(void)
 		      v34_call_init(&answerer.call, &answer_config) == V34_CALL_OK &&
 		      run_initialized_pair(&caller, &answerer, &channel),
 		      "rate renegotiation timeout fixture did not connect");
-		timeout = cme ? 240000u : 20000u + 3u * responder->call.round_trip_delay_samples;
-		CHECK(v34_training_transmitter_resume_online(&peer,
+		timeout = cme ? 240000u : 20000u + (local_request ? 2u : 3u) *
+			responder->call.round_trip_delay_samples;
+		if (local_request) {
+			CHECK(v34_call_downshift_receive(&responder->call) == V34_CALL_OK,
+			      "local rate renegotiation did not start");
+		} else {
+			CHECK(v34_training_transmitter_resume_online(&peer,
 			      &initiator->call.state.phase4.transmit.data.line) == V34_TRAINING_TRANSMITTER_OK,
 		      "rate renegotiation timeout peer did not initialize");
+		}
 		/* Deliberately leave the peer in TRN: no MP-prime/E acknowledgement
-		 * may keep an online renegotiation alive beyond its protocol deadline. */
+		 * may keep an online renegotiation alive beyond its protocol deadline.
+		 * For a local request the peer stays silent throughout. */
 		for (uint32_t sample = 0; sample < timeout + 2000u; ++sample) {
 			struct v34_call_observation observation;
 			struct v34_received_mapping_frame received;
-			int16_t caller_receive, answerer_receive, generated, peer_output;
+			int16_t caller_receive, answerer_receive, generated, peer_output = 0;
 
 			channel_receive(&channel, &caller_receive, &answerer_receive);
 			CHECK(v34_call_sample(&responder->call,
 				      calling_peer ? answerer_receive : caller_receive,
 				      NULL, NULL, &generated, &observation, &received) == V34_CALL_OK &&
-			      v34_training_transmitter_sample(&peer, &peer_output) ==
-				      V34_TRAINING_TRANSMITTER_OK,
+			      (local_request || v34_training_transmitter_sample(&peer, &peer_output) ==
+				      V34_TRAINING_TRANSMITTER_OK),
 			      "rate renegotiation timeout path failed: variant=%u sample=%u", variant, sample);
 			channel_transmit(&channel, calling_peer ? peer_output : generated,
 				calling_peer ? generated : peer_output);
@@ -3123,6 +3193,7 @@ int main(void)
 		{ "missing S recovery", test_missing_s_recovery },
 		{ "bounded initial E exchange", test_initial_e_timeout },
 		{ "bounded online rate renegotiation", test_rate_renegotiation_timeout },
+		{ "local receive rate downshift", test_local_downshift },
 		{ "reciprocal zero-rate cleardown", test_cleardown },
 		{ "cleardown waits for peer MP-prime", test_cleardown_waits_for_prime },
 		{ "completed Phase 2 handoff", test_phase2_handoff },
