@@ -4,6 +4,10 @@
 
 #include <stddef.h>
 
+enum {
+	PCM_INFO1_RESEND_RECOVERY_SAMPLES = 2 * V34_PHASE2_SAMPLE_RATE,
+};
+
 _Static_assert((int)V92_INFO1D_PAYLOAD_BITS == (int)V34_INFO1C_PAYLOAD_BITS,
 	"PCM INFO1d records must share one transport width");
 _Static_assert((int)V90_INFO1A_PAYLOAD_BITS == (int)V34_INFO1A_PAYLOAD_BITS,
@@ -452,6 +456,14 @@ enum phase2_info1_result pcm_phase2_info1_sample(
 	default:
 		break;
 	}
+	/* Keep listening for a late response after the one resend. Then use the
+	 * same full retrain as for a second INFOMARKSa request. The first
+	 * recovery can still accept a peer that waits before requesting a resend. */
+	if (next.info1d_resends != 0u &&
+	    next.control.phase == PHASE2_INFO1_RECOVERING &&
+	    next.control.first_record_elapsed_samples >=
+		    next.control.peer_deadline_elapsed_samples + PCM_INFO1_RESEND_RECOVERY_SAMPLES)
+		emitted.transport.kind = PHASE2_INFO1_EVENT_RETRAIN_REQUESTED;
 	if (!pcm_phase2_info1_is_valid(&next))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	*exchange = next;

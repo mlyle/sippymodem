@@ -438,6 +438,16 @@ static bool check_pcm_info1d_retry(
 		      &marks, V34_ANSWERING_STATION, TEST_AMPLITUDE) ==
 		      V34_PHASE2_DPSK_OK,
 	      "PCM INFO1d retry did not expose its exhausted recovery");
+	late = recovery;
+	for (size_t sample = 1; sample <= 2 * V34_PHASE2_SAMPLE_RATE; ++sample) {
+		int16_t transmit;
+		enum phase2_info1_event_kind expected = sample == 2 * V34_PHASE2_SAMPLE_RATE ?
+			PHASE2_INFO1_EVENT_RETRAIN_REQUESTED : PHASE2_INFO1_EVENT_NONE;
+
+		CHECK(pcm_phase2_info1_sample(&late, 0, &transmit, &event) == PHASE2_INFO1_OK &&
+		      event.transport.kind == expected && transmit == 0,
+		      "silent INFO1d resend recovery missed its deadline at sample %zu", sample);
+	}
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		int16_t received;
 		int16_t transmit;
