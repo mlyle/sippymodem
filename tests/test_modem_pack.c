@@ -746,6 +746,41 @@ static bool test_v42_text_requires_framing(void)
 	return true;
 }
 
+static bool test_v42_required_waits_past_raw_text(void)
+{
+	static const uint8_t prompt[] = "READY\r";
+	static const uint8_t reply[] = "ECEC";
+	struct modem originator = {
+		.caller = 1, .tx_rate = 24000, .rx_rate = 24000,
+		.cfg = { .ec = 1, .ec_detector = 1 },
+		.sregs = { [SREG_EC] = 4 },
+	};
+	uint8_t bits[80];
+	size_t count = 0;
+
+	for (size_t i = 0; i < sizeof(prompt) - 1; ++i)
+		CHECK(append_async_character(bits, sizeof(bits), &count, prompt[i], true),
+		      "raw prompt fixture overflow");
+	modem_detector_start(&originator);
+	int deadline = originator.bit_timer;
+	CHECK(receive_detection_bits(&originator, bits, count, 4) &&
+	      originator.bit_timer == deadline &&
+	      originator.packer.detector.tx_limit == 0,
+	      "raw prompt ended required V.42 detection");
+
+	memset(bits, 1, sizeof(bits));
+	count = 0;
+	for (size_t i = 0; i < sizeof(reply) - 1; ++i) {
+		CHECK(append_async_character(bits, sizeof(bits), &count, reply[i], true),
+		      "ADP fixture overflow");
+		count += 8;
+	}
+	CHECK(receive_detection_bits(&originator, bits, count, 4) &&
+	      originator.packer.detector.ec_enable == 1 && originator.bit_timer == 0,
+	      "V.42 reply after the prompt did not complete detection");
+	return true;
+}
+
 struct hdlc_fixture {
 	struct hdlc_frame transmit_frame;
 	const uint8_t *payload;
@@ -1037,6 +1072,8 @@ int main(void)
 		  test_v42_requires_adjacent_synchronous_flags },
 		{ "V.42 detection stop validation",
 		  test_v42_rejects_bad_detection_stops },
+		{ "V.42 required detection survives a raw prompt",
+		  test_v42_required_waits_past_raw_text },
 		{ "HDLC transmit preamble", test_hdlc_transmit_preamble },
 		{ "HDLC round trip", test_hdlc_round_trip },
 		{ "HDLC receive before transmit resumes", test_hdlc_receive_before_transmit_resume },

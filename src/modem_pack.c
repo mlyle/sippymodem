@@ -672,6 +672,7 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 {
 	struct bits_state *s = &m->unpack;
 	struct detect_state *d = &m->packer.detector;
+	const bool allow_raw_fallback = !detector_ec_required(m);
 	int ret = 0;
 	int finish = 0;
 	u8 ch;
@@ -710,7 +711,7 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 				continue;
 			}
 			PACK_DBG("rx pattern: 0x%02x.\n",ch);
-			if (!d->ec_enable && !finish &&
+			if (allow_raw_fallback && !d->ec_enable && !finish &&
 			    (m->caller || d->tx_count == 0) &&
 			    detector_observe_text(m, ch) != 0) {
 				modem_update_status(m, STATUS_ERROR);
